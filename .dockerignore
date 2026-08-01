@@ -1,0 +1,20 @@
+# Secret hygiene first. `.git` carries every secret that was ever committed and then
+# removed; `.env` and `.env.*` carry the ones that were never meant to be committed at
+# all. A COPY . . with any of these present bakes them into a layer that ships.
+#
+# This service's `.env` would carry ANALYTICS_PSEUDONYM_KEY — the pepper. It is the one
+# secret in the estate whose disclosure is not "an attacker can act as us" but "the
+# pseudonymisation was never real": with it and a candidate user id, an attacker can test
+# whether a person is in the event store. Baking it into an image layer would put it in
+# every registry mirror that ever pulled the tag.
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+node_modules
+dist
+*.tsbuildinfo
+.github
+README.md
