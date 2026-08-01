@@ -123,7 +123,7 @@ function requireExactScope(principal: Principal, required: string): void {
  * A scoped service token, or an operator. **Never an ordinary user token**, whatever it carries:
  * there is no per-user view of this data and there is not going to be one, because a per-user view
  * is the support question AD-21 exists to make unanswerable
- * (13-operational-model.md:602-607).
+ * (13-operational-model.md:603-608).
  */
 function requireReader(principal: Principal): void {
   if (isAdmin(principal)) return

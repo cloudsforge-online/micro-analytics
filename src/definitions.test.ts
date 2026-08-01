@@ -53,7 +53,7 @@ describe('metric definitions', { skip }, () => {
 
   describe('the catalogue this build carries', () => {
     it('states numerator, denominator and window for every metric', () => {
-      // 13-operational-model.md:608. A metric that does not is a number two people read differently.
+      // 13-operational-model.md:611. A metric that does not is a number two people read differently.
       for (const definition of DEFINITIONS) {
         assert.ok(definition.numerator.length > 0, `${definition.id} has no numerator`)
         assert.ok(definition.denominator.length > 0, `${definition.id} has no denominator`)

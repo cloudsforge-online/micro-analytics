@@ -228,7 +228,7 @@ describe('the HTTP surface', { skip }, () => {
 
     it('an ordinary user may NOT, whatever they carry', async () => {
       // There is no per-user view of this data and there is not going to be one: a per-user view is
-      // the support question AD-21 exists to make unanswerable (13-operational-model.md:602-607).
+      // the support question AD-21 exists to make unanswerable (13-operational-model.md:603-608).
       const res = await get('/reports/active', 'person')
       assert.equal(res.status, 403)
     })

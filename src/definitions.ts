@@ -15,7 +15,7 @@
  * leaves the old series intact, with the definition it was computed under still readable beside it.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * Every entry carries numerator, denominator and window, because 13-operational-model.md:608 says
+ * Every entry carries numerator, denominator and window, because 13-operational-model.md:611 says
  * "every metric states numerator, denominator and window" and a metric that does not is a number
  * two people will read differently. The `metric` field cites the row in 13 §12 it implements.
  *

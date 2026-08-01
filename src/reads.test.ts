@@ -184,7 +184,7 @@ describe('reads', { skip }, () => {
     })
 
     it('excludes authentication events, which is the whole substance of "active"', async () => {
-      // 13-operational-model.md:610. A user whose only activity is signing in and leaving is not
+      // 13-operational-model.md:611. A user whose only activity is signing in and leaving is not
       // an active user, and counting them makes every engagement number look better than it is.
       await plantPeople(9, 'session_started', new Date(Date.now() - DAY), 'auth')
       const count = await activeSubjects(sql, WINDOW, MIN_COHORT)

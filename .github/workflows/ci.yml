@@ -1,0 +1,61 @@
+name: CI
+
+# The whole file. Every service in the estate calls the ONE reusable workflow in micro-org rather
+# than carrying its own copy — the measured target in docs/ecosystem/03 §5 is zero bespoke CI files.
+# If this repository ever needs a job of its own, that is the signal the reusable workflow needs an
+# input, not that this repository needs a fork of it.
+#
+# `service-ci.yml` typechecks, runs the suite against a real Postgres `ci_test` container, and FAILS
+# the build if the database-backed suite skipped — which is why `src/testsupport.ts` reads
+# `ANALYTICS_TEST_DATABASE_URL` spelled exactly as the workflow exports it. It also enforces the
+# estate rules (one database, no cross-service imports, the three health endpoints, no unleased
+# timers) that repository walls used to enforce for free.
+#
+# 11-data-and-contract-strategy.md:512 asks for a schema check here — "a schema check in
+# `analytics`'s CI fails the build if a column named `user_id`, `email`, `handle`, `address` or
+# `amount` appears in any table". It is `src/migrations.test.ts` instead, run against the real
+# migrated schema through `information_schema.columns`. That fails the build in the same place and
+# for the same reason, it can see a column a grep over source would miss, and it does not fork the
+# reusable workflow to say so.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: cloudsforge-online/micro-org/.github/workflows/service-ci.yml@main
+    with:
+      service: analytics
+      database-env-var: ANALYTICS_DATABASE_URL
+      port: 4023
+      # The image startup smoke test boots the real service, and `env.ts` validates its
+      # configuration at import — so the container needs the variables it declares, not just a
+      # database, or it exits before it serves /livez.
+      #
+      # These are CI-only NON-SECRETS. The pepper below is a throwaway that exists only to clear a
+      # 32-character length check on a container that will be killed thirty seconds later; it
+      # pseudonymises nothing, because no event is ever ingested during the smoke test. A REAL
+      # ANALYTICS_PSEUDONYM_KEY must never appear in a workflow file, an image layer, or anywhere
+      # a repository read grants access to — see the README on where it does live.
+      smoke-env: |
+        ANALYTICS_PSEUDONYM_KEY=ci-only-not-a-real-pepper-000000000000
+        ANALYTICS_TOKEN=ci-only-not-a-real-token-0000000000000
+        ANALYTICS_DELIVERY_SECRETS=ci-only-not-a-real-delivery-secret-0000
+        IDENTITY_JWKS_URL=http://127.0.0.1:4001/.well-known/jwks.json
+        IDENTITY_ISSUER=http://127.0.0.1:4001
+    secrets:
+      # @cloudsforge/* is resolved by link:../runtime and link:../contracts, so CI checks out
+      # micro-runtime and micro-contracts as siblings — both private, so the workflow needs a
+      # contents:read token.
+      estate_token: ${{ secrets.ESTATE_READ_TOKEN }}
+    permissions:
+      contents: read
+      packages: read
+
+  hygiene:
+    uses: cloudsforge-online/micro-org/.github/workflows/secret-hygiene.yml@main
+    permissions:
+      contents: read

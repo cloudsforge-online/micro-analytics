@@ -207,7 +207,7 @@ export async function sweepRetention(sql: Db, retention: Retention): Promise<Swe
  * Recompute the retention grid. Metric 18.
  *
  * A cohort is the ISO week of a subject's FIRST `user_registered`, and a subject is active in week
- * N if they emitted a non-authentication event in it — 13-operational-model.md:610 defines "active"
+ * N if they emitted a non-authentication event in it — 13-operational-model.md:611 defines "active"
  * in exactly those words.
  *
  * The whole grid is rewritten inside one transaction rather than upserted cell by cell. A cohort
