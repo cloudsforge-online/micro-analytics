@@ -58,7 +58,7 @@ describe('migrations', { skip }, () => {
         [
           row.subject_key, row.subject_kind, row.event_name, row.occurred_at, row.session,
           row.props, row.source_event_id, row.source_topic, row.producer,
-        ] as unknown[],
+        ] as (string | null)[],
       )
       return null
     } catch (err) {
