@@ -69,6 +69,8 @@ import {
   funnelById,
   retentionGrid,
   storeSummary,
+  systemNow,
+  type Now,
   type Window,
 } from './reads.ts'
 import { listRejections, type Db } from './store.ts'
@@ -90,6 +92,14 @@ export interface ServerDeps {
   readonly minCohort: number
   readonly queue: JobQueue
   readonly beforeScrape?: () => Promise<void>
+  /**
+   * Test seam. Production passes nothing and gets the real clock.
+   *
+   * Every read route defaults its window from an instant, and `/cohorts/retention` anchors its
+   * cutoff on one. Reading that instant from the wall clock deep inside a query is what made
+   * `reads.test.ts` depend on the weekday it ran on — see `reads.ts`'s `Now`.
+   */
+  readonly now?: Now
 }
 
 const MAX_BODY_BYTES = 256 * 1024
@@ -498,7 +508,7 @@ function buildRoutes(): Route[] {
         if (!EVENT_NAMES.includes(event)) {
           throw new BadRequestError(`event must be one of: ${EVENT_NAMES.join(', ')}`)
         }
-        const window = parseWindow(ctx.url)
+        const window = parseWindow(ctx.url, deps.now)
         const points = await dailySeries(deps.sql, event, window, deps.minCohort)
         return { status: 200, body: { event, minCohort: deps.minCohort, points } }
       },
@@ -508,7 +518,7 @@ function buildRoutes(): Route[] {
       path: '/reports/active',
       handle: async (ctx, deps) => {
         requireReader(await authenticate(ctx, deps))
-        const window = parseWindow(ctx.url)
+        const window = parseWindow(ctx.url, deps.now)
         const count = await activeSubjects(deps.sql, window, deps.minCohort)
         return { status: 200, body: { minCohort: deps.minCohort, count } }
       },
@@ -527,7 +537,7 @@ function buildRoutes(): Route[] {
       handle: async (ctx, deps) => {
         requireReader(await authenticate(ctx, deps))
         const id = ctx.params['id'] ?? ''
-        const window = parseWindow(ctx.url)
+        const window = parseWindow(ctx.url, deps.now)
         const result = await funnelById(deps.sql, id, window, deps.minCohort)
         if (!result) throw new NotFoundError(`no funnel ${id}; the catalogue is closed`)
         return { status: 200, body: { minCohort: deps.minCohort, ...result } }
@@ -539,7 +549,7 @@ function buildRoutes(): Route[] {
       handle: async (ctx, deps) => {
         requireReader(await authenticate(ctx, deps))
         const weeks = parseInteger(ctx.url.searchParams.get('weeks'), 'weeks', 12, 2, 52)
-        const cells = await retentionGrid(deps.sql, weeks, deps.minCohort)
+        const cells = await retentionGrid(deps.sql, weeks, deps.minCohort, deps.now)
         return { status: 200, body: { minCohort: deps.minCohort, weeks, cells } }
       },
     },
@@ -684,8 +694,8 @@ function idempotencyKeyOf(req: IncomingMessage): string {
  * Bounded at four hundred days, which is the retention horizon: a wider window can only return
  * rows that have been deleted, and an unbounded one is a full scan any reader can request.
  */
-export function parseWindow(url: URL): Window {
-  const to = parseInstant(url.searchParams.get('to'), 'to') ?? new Date()
+export function parseWindow(url: URL, now: Now = systemNow): Window {
+  const to = parseInstant(url.searchParams.get('to'), 'to') ?? now()
   const from = parseInstant(url.searchParams.get('from'), 'from') ?? new Date(to.getTime() - 30 * 86_400_000)
   if (from >= to) throw new BadRequestError('from must be before to')
   if (to.getTime() - from.getTime() > MAX_WINDOW_DAYS * 86_400_000) {

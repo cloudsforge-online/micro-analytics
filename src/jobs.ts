@@ -33,7 +33,7 @@
 
 import { type JobQueue, type JobRunner, type RunnerEvent } from '@cloudsforge/jobs'
 import type { Logger, Metrics } from '@cloudsforge/telemetry'
-import { AUTHENTICATION_EVENTS } from './reads.ts'
+import { AUTHENTICATION_EVENTS, systemNow, type Now } from './reads.ts'
 import { pruneSubjects } from './pseudonym.ts'
 import type { Db } from './store.ts'
 
@@ -104,15 +104,19 @@ export interface JobDeps {
   readonly metrics: Metrics
   readonly retention: Retention
   readonly cohortWeeks: number
+  /** Test seam. Production passes nothing and gets the real clock — see `reads.ts`'s `Now`. */
+  readonly now?: Now
 }
 
 export function registerHandlers(runner: JobRunner, deps: JobDeps): JobRunner {
+  const now = deps.now ?? systemNow
+
   runner.register(ROLLUP_KIND, async () => {
-    await rollupOnce(deps.sql)
+    await rollupOnce(deps.sql, ROLLUP_DAYS, now)
   })
 
   runner.register(RETENTION_KIND, async () => {
-    const swept = await sweepRetention(deps.sql, deps.retention)
+    const swept = await sweepRetention(deps.sql, deps.retention, now)
     deps.logger.info('retention sweep', { ...swept })
     deps.metrics.increment('analytics_retention_deleted_total', { table: 'events' }, swept.events)
     deps.metrics.increment('analytics_retention_deleted_total', { table: 'subject_keys' }, swept.subjects)
@@ -128,6 +132,9 @@ export function registerHandlers(runner: JobRunner, deps: JobDeps): JobRunner {
 
 /* ------------------------------------------------------------------ rollup */
 
+/** How many days back a rollup re-runs over. Named so the handler and the default cannot drift. */
+export const ROLLUP_DAYS = 3
+
 /**
  * Upsert daily rollups over the last few days.
  *
@@ -139,20 +146,25 @@ export function registerHandlers(runner: JobRunner, deps: JobDeps): JobRunner {
  * and the number the suppression threshold is applied to. `filter (where subject_key is not null)`
  * matters: a machine event has no subject, and counting it as a person would make a reconciliation
  * run look like a user.
+ *
+ * `now` anchors the re-run window and is a parameter, not a SQL `now()`, for the reason set out at
+ * `reads.ts`'s `Now`: a windowed query that reads the wall clock cannot be pinned by a test, and a
+ * test it cannot pin is a test whose answer depends on the day it runs.
  */
-export async function rollupOnce(sql: Db, days = 3): Promise<void> {
+export async function rollupOnce(sql: Db, days = ROLLUP_DAYS, now: Now = systemNow): Promise<void> {
+  const at = now()
   await sql`
     insert into event_rollups (bucket_day, event_name, events, subjects, computed_at)
     select date_trunc('day', occurred_at)::date                              as bucket_day,
            event_name,
            count(*)::bigint                                                  as events,
            count(distinct subject_key) filter (where subject_key is not null)::int as subjects,
-           now()
+           ${at}::timestamptz
       from events
-     where occurred_at >= date_trunc('day', now() - make_interval(days => ${days}))
+     where occurred_at >= date_trunc('day', ${at}::timestamptz - make_interval(days => ${days}))
      group by bucket_day, event_name
     on conflict (bucket_day, event_name) do update set
-      events = excluded.events, subjects = excluded.subjects, computed_at = now()
+      events = excluded.events, subjects = excluded.subjects, computed_at = ${at}::timestamptz
   `
 }
 
@@ -173,28 +185,41 @@ export interface SweepResult {
  * mapping whose last event has just expired. Doing it the other way round keeps every mapping one
  * sweep longer than it needs to exist — which is a pseudonym for a person, retained for no reason,
  * in the one service that claims to hold nothing it does not need.
+ *
+ * Every horizon is measured from `at`, taken ONCE. It used to be four separate SQL `now()` calls
+ * plus a fifth `Date.now()` for `pruneSubjects` — five reads of two different clocks inside one
+ * sweep, so the events horizon and the mapping horizon were never quite the same instant and no
+ * test could pin either. One read, one horizon, supplied by the caller.
  */
-export async function sweepRetention(sql: Db, retention: Retention): Promise<SweepResult> {
+export async function sweepRetention(
+  sql: Db,
+  retention: Retention,
+  now: Now = systemNow,
+): Promise<SweepResult> {
+  const at = now()
   const events = await deleted(sql`
-    delete from events where occurred_at < now() - make_interval(days => ${retention.eventDays})
+    delete from events
+     where occurred_at < ${at}::timestamptz - make_interval(days => ${retention.eventDays})
   `)
   const rollups = await deleted(sql`
-    delete from event_rollups where bucket_day < (current_date - make_interval(days => ${retention.rollupDays}))
+    delete from event_rollups
+     where bucket_day < (${at}::timestamptz::date - make_interval(days => ${retention.rollupDays}))
   `)
 
-  const cutoff = new Date(Date.now() - retention.eventDays * 86_400_000)
+  const cutoff = new Date(at.getTime() - retention.eventDays * 86_400_000)
   const subjects = await pruneSubjects(sql, cutoff)
 
   // The inbox is a redelivery horizon, not an archive: past it, `events_source_uniq` is still
   // there and still refuses a duplicate, so the row has stopped earning its storage.
   const inbox = await deleted(sql`
-    delete from inbox where received_at < now() - make_interval(days => ${retention.inboxDays})
+    delete from inbox
+     where received_at < ${at}::timestamptz - make_interval(days => ${retention.inboxDays})
   `)
   // A claim that produced an artefact is kept regardless of age — it is the only link between a
   // caller's key and what it made. Same rule as market/src/idempotency.ts:198.
   const idempotency = await deleted(sql`
     delete from idempotency_keys
-     where created_at < now() - make_interval(days => ${retention.idempotencyDays})
+     where created_at < ${at}::timestamptz - make_interval(days => ${retention.idempotencyDays})
        and artefact_id is null
   `)
 

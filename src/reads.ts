@@ -64,6 +64,36 @@ export interface Window {
   readonly to: Date
 }
 
+/* ------------------------------------------------------------------ time, as a parameter */
+
+/**
+ * **Wall-clock time is an argument here, never an ambient fact.**
+ *
+ * Most of this file already took its window as a parameter — `dailySeries`, `activeSubjects` and
+ * `funnel` are all handed a `Window` — and the one place that did not (`retentionGrid`, which
+ * anchored its cutoff on SQL `now()`) produced a test whose result depended on the day it ran.
+ *
+ * The failure is worth stating precisely, because the shape recurs. `date_trunc('week', …)` cuts on
+ * a **Monday, in the session's timezone**. A fixture written as "three weeks ago, plus a day" keeps
+ * the weekday of whatever day the suite runs on, so on one weekday the two timestamps share an ISO
+ * week and on another they straddle the Monday boundary and land in different `week_offset`s. The
+ * suite was green for three weeks and red on a Sunday — and, worse, green for the wrong reason in
+ * between, since nothing in it ever checked that the offset was computed rather than assumed.
+ *
+ * A test cannot pin an instant it is not allowed to supply. So the instant is supplied. Production
+ * passes nothing and gets the real clock; a test passes a fixed one and derives its fixture from
+ * the same value, which is the only arrangement in which the fixture and the window it is asserted
+ * against cannot drift apart.
+ *
+ * The type is `() => Date` rather than `() => number` to match the estate's prevailing seam —
+ * `notify/src/pipeline.ts:83`, `runtime/packages/jobs/src/index.ts:121`, `foresight/src/jobs.ts:98`
+ * — and because every use of it here crosses into SQL as a `timestamptz` parameter.
+ */
+export type Now = () => Date
+
+/** The real clock. The default for every function below, so production wires up nothing. */
+export const systemNow: Now = () => new Date()
+
 /* ------------------------------------------------------------------ daily series */
 
 export interface DailyPoint {
@@ -247,18 +277,23 @@ export interface RetentionCell {
  * "3 of 40 active" discloses three people; a cell showing "8 of 3" discloses the whole cohort. The
  * threshold is applied to each, so a small cohort publishes neither its size nor its activity —
  * and a cell whose cohort is suppressed cannot have a rate computed from it, which is the point.
+ *
+ * `now` is the cutoff's anchor and is a parameter for the reason in `Now` above: this was SQL
+ * `now()`, and a windowed query that reads the wall clock is a query no test can pin.
  */
 export async function retentionGrid(
   sql: Db,
   sinceWeeks: number,
   minCohort: number,
+  now: Now = systemNow,
 ): Promise<readonly RetentionCell[]> {
   const rows = await sql<
     { cohort_week: Date; week_offset: number; cohort_size: number; active: number }[]
   >`
     select cohort_week, week_offset, cohort_size, active
       from cohort_retention
-     where cohort_week >= (date_trunc('week', now())::date - make_interval(weeks => ${sinceWeeks}))
+     where cohort_week >= (date_trunc('week', ${now()}::timestamptz)::date
+                           - make_interval(weeks => ${sinceWeeks}))
      order by cohort_week desc, week_offset
   `
   return rows.map((row) => ({
