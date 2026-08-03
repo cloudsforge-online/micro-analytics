@@ -7,14 +7,22 @@
  * `org/.github/workflows/web-ci.yml` already fails any frontend that ships a Google, Segment,
  * Hotjar or Mixpanel tag. That rule is only defensible because this file exists.
  *
- * ## Two checks, and they answer different questions
+ * ## One check, and why it is the right one
  *
- * A service token says **who is calling**. The delivery signature says **the body was not altered
- * between the producer's outbox and this handler**. Neither implies the other: a token proves
- * nothing about the bytes, and a signature proves nothing about which of the estate's services is
- * on the other end of the socket. Both are required, and the signature is verified over the raw
- * request bytes before anything parses them — the ordering is the point, since a parser is an
- * attack surface reachable by anyone who can open a socket.
+ * A service token would say **who is calling**. The delivery signature says **these exact bytes
+ * were produced by something holding the estate's outbox signing secret**. Neither implies the
+ * other — but only one of them is obtainable by the caller this route exists to serve.
+ *
+ * This route used to demand both. That made it undeliverable: an outbox relay is a background job
+ * driven by a Postgres poll, it sends the signature and the event id and nothing else, and it has
+ * no way to mint a bearer. Demanding one meant the event bus was refused by the route built to
+ * receive it, and the funnel denominators stayed empty behind a healthy-looking service. The MAC
+ * is now the whole of the authentication, which is the same repair `micro-notify` and
+ * `micro-activity` made. `server.ts`'s `/ingest` route carries the full argument.
+ *
+ * The signature is verified over the raw request bytes before anything parses them — the ordering
+ * is the point, since a parser is an attack surface reachable by anyone who can open a socket, and
+ * with the bearer gone it is the ONLY thing in front of that parser.
  *
  * `verifyDelivery` comes from `@cloudsforge/contracts-events` and is not reimplemented here.
  *

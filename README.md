@@ -275,19 +275,32 @@ cohort export. `hasScope` from `@cloudsforge/auth` is deliberately **not importe
 `server.test.ts` asserts both that `analytics:*` grants nothing and that the import is absent, so the
 choice cannot drift back.
 
-The scopes are `analytics:ingest`, `analytics:read` and `analytics:admin`. An operator (an admin
-user) may read. **An ordinary user token may not, whatever it carries** — there is no per-user view
-of this data and there is not going to be one, because a per-user view is the support question AD-21
-exists to make unanswerable (`13-operational-model.md:603-608`).
+The scopes are `analytics:read` and `analytics:admin`. An operator (an admin user) may read. **An
+ordinary user token may not, whatever it carries** — there is no per-user view of this data and there
+is not going to be one, because a per-user view is the support question AD-21 exists to make
+unanswerable (`13-operational-model.md:603-608`).
+
+**There is no `analytics:ingest`, and that is the repair rather than an omission.** `POST /ingest`
+demanded that scope and no producer in this estate could present it: an outbox relay sends the
+delivery signature and the event id and nothing else — all twenty-one relays were read, not assumed,
+`identity/src/outbox.ts:320` being the canonical one — so every event this service exists to consume
+died `401` at the first line of the handler, and every funnel metric was computed against an empty
+denominator behind a service reporting itself healthy. The route is now **MAC-only**, the same
+repair `micro-notify` (`server.ts:418`) and `micro-activity` made, and the constant was deleted
+rather than left unreferenced. `contracts/packages/auth` and `deploy/compose` still carry the now
+unused scope; both are reported to their owners rather than edited from here.
 
 ---
 
 ## The rest of the shape
 
 - **Consumer only, no broker.** `POST /ingest` takes a signed `EventEnvelope` from a producer's
-  outbox relay. Two checks, answering different questions: the **service token** says who is calling,
-  the **delivery signature** says the body was not altered between the outbox and this handler. The
-  signature is verified over the **raw request bytes** before anything parses them, because a parser
+  outbox relay, and the **delivery signature is the whole of the authentication** — no bearer token
+  is read. A MAC over the exact bytes is a shared-secret proof about the thing that actually matters
+  here, the content of the row; a bearer would have proved only who opened the socket, and no relay
+  can present one. A signed-in person still cannot reach this route, because a person does not hold
+  the outbox signing secret. The signature is verified over the **raw request bytes** before anything
+  parses them — which matters more now that it is the only thing in front of the parser, and a parser
   is an attack surface reachable by anyone who can open a socket. `contracts-events` registers no
   `analytics.*` topic and names this service as one that "is only ever a consumer"
   (`contracts/packages/events/src/index.ts:174`), so there is no outbox here — an outbox would come

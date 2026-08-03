@@ -33,7 +33,7 @@ import { JobQueue, type Sql as JobsSql } from '@cloudsforge/jobs'
 import { Lifecycle, postgresProbe } from '@cloudsforge/lifecycle'
 import { COHORT_KIND } from './jobs.ts'
 import { deriveSubject, rawSubject } from './pseudonym.ts'
-import { SCOPE_ADMIN, SCOPE_INGEST, SCOPE_READ, createServer, hasExactScope, scrapeRefresh, type PrincipalVerifier, type ServerDeps } from './server.ts'
+import { SCOPE_ADMIN, SCOPE_READ, createServer, hasExactScope, scrapeRefresh, type PrincipalVerifier, type ServerDeps } from './server.ts'
 import {
   TEST_PEPPER,
   migrateTestDb,
@@ -56,7 +56,6 @@ const DAY = 86_400_000
  * `runtime/packages/auth`'s matcher it would read every report; here it reads nothing.
  */
 const PRINCIPALS: Readonly<Record<string, Principal>> = {
-  ingester: { kind: 'service', service: 'wallet', scopes: [SCOPE_INGEST] },
   reader: { kind: 'service', service: 'admin-api', scopes: [SCOPE_READ] },
   admin: { kind: 'service', service: 'admin-api', scopes: [SCOPE_ADMIN] },
   wildcard: { kind: 'service', service: 'legacy', scopes: ['analytics:*'] },
@@ -344,17 +343,48 @@ describe('the HTTP surface', { skip }, () => {
       return fetch(`${app.url}/ingest`, { method: 'POST', headers, body: raw })
     }
 
-    it('records a signed delivery from a scoped service', async () => {
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    // THE DEFECT THESE THREE EXIST FOR.
+    //
+    // Every test below used to pass `token: 'ingester'`, so the suite only ever exercised a caller
+    // that does not exist. No outbox relay in this estate sends an `Authorization` header — all
+    // twenty-one were read, `identity/src/outbox.ts:320` among them — so the shape exercised here
+    // is now the shape actually on the wire: signature, event id, nothing else.
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+
+    it('RECORDS A RELAY DELIVERY THAT CARRIES NO AUTHORIZATION HEADER AT ALL', async () => {
+      // Against the previous build this answered 401 `unauthenticated` — measured against the
+      // running estate as well as here — and the onboarding denominator stayed empty for ever.
       const raw = body({ analytics: { subject: SPIROS, surface: 'register' } })
-      const res = await post(raw, { token: 'ingester', signature: signDelivery(raw, SECRET) })
-      assert.equal(res.status, 201)
+      const res = await post(raw, { signature: signDelivery(raw, SECRET) })
+      assert.equal(res.status, 201, 'a correctly signed delivery with no bearer must be recorded')
       const parsed = (await res.json()) as { status: string; event: string; droppedProperties: string[] }
       assert.deepEqual(parsed, { status: 'recorded', event: 'user_registered', droppedProperties: [] })
+      assert.equal((await sql`select 1 from events`).length, 1)
+    })
+
+    it('THE MAC IS THE WHOLE AUTHENTICATION: a valid bearer does not substitute for it', async () => {
+      // The other direction, and the one that would catch a future edit that "restores" the token
+      // check by making the signature optional when a bearer is present. An admin token is the
+      // strongest credential this service knows and it buys nothing here.
+      const raw = body({ analytics: { subject: SPIROS } })
+      const res = await post(raw, { token: 'admin' })
+      assert.equal(res.status, 401)
+      assert.equal(((await res.json()) as { error: { code: string } }).error.code, 'bad_signature')
+      assert.equal((await sql`select 1 from events`).length, 0)
+    })
+
+    it('and a bearer that would have been REFUSED before is now simply irrelevant', async () => {
+      // This case used to assert 403: `reader` holds `analytics:read`, never `analytics:ingest`.
+      // The scope is gone, so what decides the outcome is the signature and only the signature.
+      const raw = body({ analytics: { subject: SPIROS } })
+      const res = await post(raw, { token: 'reader', signature: signDelivery(raw, SECRET) })
+      assert.equal(res.status, 201)
     })
 
     it('stores a pseudonym and not the subject', async () => {
       const raw = body({ analytics: { subject: SPIROS } })
-      await post(raw, { token: 'ingester', signature: signDelivery(raw, SECRET) })
+      await post(raw, { signature: signDelivery(raw, SECRET) })
       const rows = await sql<{ subject_key: string }[]>`select subject_key from events`
       assert.equal(rows.length, 1)
       assert.match(rows[0]!.subject_key, /^[0-9a-f]{64}$/)
@@ -362,7 +392,9 @@ describe('the HTTP surface', { skip }, () => {
     })
 
     it('refuses an unsigned body with 401, before parsing it', async () => {
-      const res = await post('{"not":"even an envelope"', { token: 'ingester' })
+      // The body is not valid JSON. A 401 rather than a 400 proves the parser was never reached —
+      // which matters more now that the MAC is the only thing standing in front of it.
+      const res = await post('{"not":"even an envelope"')
       assert.equal(res.status, 401)
       const parsed = (await res.json()) as { error: { code: string } }
       assert.equal(parsed.error.code, 'bad_signature')
@@ -370,21 +402,32 @@ describe('the HTTP surface', { skip }, () => {
 
     it('refuses a body signed with the wrong secret', async () => {
       const raw = body({ analytics: { subject: SPIROS } })
-      const res = await post(raw, { token: 'ingester', signature: signDelivery(raw, 'a-different-secret-of-length') })
+      const res = await post(raw, { signature: signDelivery(raw, 'a-different-secret-of-length') })
       assert.equal(res.status, 401)
     })
 
-    it('costs the ingest scope, which a reader does not have', async () => {
-      const raw = body({ analytics: { subject: SPIROS } })
-      const res = await post(raw, { token: 'reader', signature: signDelivery(raw, SECRET) })
-      assert.equal(res.status, 403)
+    it('THE SIGNATURE IS OVER THE EXACT BYTES: one altered byte is refused', async () => {
+      // Signed over `raw`, delivered as `tampered`. The two parse to objects that differ in one
+      // property value, so anything that verified a re-serialisation, or verified after parsing,
+      // would let this through.
+      const raw = body({ analytics: { subject: SPIROS, surface: 'register' } })
+      const signature = signDelivery(raw, SECRET)
+      const tampered = raw.replace('"surface":"register"', '"surface":"registeR"')
+      assert.notEqual(tampered, raw, 'the fixture must actually differ or this asserts nothing')
+      const res = await fetch(`${app.url}/ingest`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', [SIGNATURE_HEADER]: signature },
+        body: tampered,
+      })
+      assert.equal(res.status, 401)
+      assert.equal((await sql`select 1 from events`).length, 0)
     })
 
     it('answers 200 to a redelivery rather than an error that makes the relay retry for ever', async () => {
       const raw = body({ analytics: { subject: SPIROS } })
       const signature = signDelivery(raw, SECRET)
-      assert.equal((await post(raw, { token: 'ingester', signature })).status, 201)
-      const second = await post(raw, { token: 'ingester', signature })
+      assert.equal((await post(raw, { signature })).status, 201)
+      const second = await post(raw, { signature })
       assert.equal(second.status, 200)
       assert.deepEqual((await second.json() as { status: string }).status, 'duplicate')
       const rows = await sql`select 1 from events`
@@ -393,7 +436,7 @@ describe('the HTTP surface', { skip }, () => {
 
     it('tells the producer which properties were refused, and stores neither', async () => {
       const raw = body({ analytics: { subject: SPIROS, display_name: 'Spiros Savvanis', surface: 'register' } })
-      const res = await post(raw, { token: 'ingester', signature: signDelivery(raw, SECRET) })
+      const res = await post(raw, { signature: signDelivery(raw, SECRET) })
       assert.equal(res.status, 201)
       const parsed = (await res.json()) as { droppedProperties: string[] }
       assert.deepEqual(parsed.droppedProperties, ['display_name'])

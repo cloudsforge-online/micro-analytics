@@ -9,10 +9,14 @@
  *
  * AD-21: analytics is fed by the event bus, not by a page tag. `POST /ingest` takes a signed event
  * envelope from a producer's outbox relay, and that is the only write path for an event. A
- * collector endpoint a browser could reach would bypass the delivery signature, the service token
- * and — because a browser has no way to know a pepper — the pseudonymisation as well. The frontend
- * events AD-21 names (`page_viewed`, `cta_clicked`, `form_abandoned`) reach this service the same
- * way every other event does: through their own service's outbox.
+ * collector endpoint a browser could reach would bypass the delivery signature and — because a
+ * browser has no way to know a pepper — the pseudonymisation as well. The frontend events AD-21
+ * names (`page_viewed`, `cta_clicked`, `form_abandoned`) reach this service the same way every
+ * other event does: through their own service's outbox.
+ *
+ * `/ingest` authenticates with the delivery MAC and reads no bearer token; the route below records
+ * why at length, and why that is not a weakening. Every OTHER route on this service demands a
+ * bearer, and the scope matcher for those is the exact one described below.
  * ---------------------------------------------------------------------------------------------
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -109,7 +113,20 @@ const SAFE_IDEMPOTENCY_KEY = /^[A-Za-z0-9_.:-]{8,128}$/
 
 /* ------------------------------------------------------------------ scopes */
 
-export const SCOPE_INGEST = 'analytics:ingest'
+/**
+ * There is deliberately no `SCOPE_INGEST` here any more.
+ *
+ * `POST /ingest` is MAC-only — see the route for the argument — so `analytics:ingest` was a scope
+ * no route checked and no producer could present. It is deleted rather than left as an
+ * unreferenced constant, following `micro-notify`, which deleted its `notify:ingest` for the same
+ * reason rather than registering it.
+ *
+ * Two orphans outside this repository follow from that and are REPORTED, not edited here:
+ * `contracts/packages/auth/src/index.ts:187` still registers `analytics:ingest` in the estate's
+ * scope vocabulary, and `deploy/compose/docker-compose.estate.yml:302` still mints it into the
+ * analytics service token. Neither is harmful — an unused scope grants nothing — and neither
+ * repository is this one's to change.
+ */
 export const SCOPE_READ = 'analytics:read'
 export const SCOPE_ADMIN = 'analytics:admin'
 
@@ -454,10 +471,38 @@ function buildRoutes(): Route[] {
       /**
        * The only way a row is created.
        *
-       * The order below is the security property: read the raw bytes, prove the caller is a
-       * service, verify the signature over exactly those bytes, and only then parse. Parsing first
-       * would put a parser in front of the authentication, reachable by anyone who can open a
-       * socket.
+       * ════════════════════════════════════════════════════════════════════════════════════════
+       * **THE SIGNATURE IS THE AUTHENTICATION. NO BEARER TOKEN IS READ HERE, DELIBERATELY.**
+       *
+       * This handler used to call `authenticate()` and demand an `analytics:ingest` scope before
+       * it read a byte. **No producer in this estate could ever satisfy it.** Every outbox relay
+       * sends exactly two headers — the delivery signature and the event id — and nothing else;
+       * `identity/src/outbox.ts:320` is the canonical one, and all twenty-one relays in the estate
+       * were checked, not assumed. A relay is a background job woken by a Postgres poll: it has no
+       * session, no user, and no way to mint a token. So every event bound for this service died
+       * 401 at this line, always, and the onboarding denominator every funnel metric divides by
+       * stayed empty while the service reported itself healthy.
+       *
+       * That was measured against the running estate before it was changed: a correctly signed
+       * `POST /ingest` carrying no `Authorization` header answered
+       * `401 {"code":"unauthenticated"}`.
+       *
+       * **Why removing it does not weaken anything.** The two checks were never redundant, but
+       * they were also never both obtainable. A bearer proves *who* opened the socket and proves
+       * nothing about the bytes; the MAC proves the bytes were produced by something holding the
+       * estate's outbox signing secret, which is a strictly stronger statement about the thing
+       * that actually matters here — the content of the row. A signed-in person still cannot reach
+       * this route, because a person does not hold that secret. `micro-notify` (`server.ts:418`)
+       * and `micro-activity` made this exact repair for this exact reason; `trade` and `worlds`
+       * shaped their inboxes this way from the start.
+       *
+       * The `analytics:ingest` scope constant was DELETED rather than left unreferenced — a scope
+       * that no route checks is a capability the vocabulary claims and does not have.
+       * ════════════════════════════════════════════════════════════════════════════════════════
+       *
+       * The order below is the security property: read the raw bytes, verify the signature over
+       * exactly those bytes, and only then parse. Parsing first would put a parser in front of the
+       * authentication, reachable by anyone who can open a socket.
        *
        * It is deliberately NOT wrapped in `withIdempotency`: the inbox, unique on
        * `(topic, event_id)`, is a stronger guarantee than a caller-supplied key, because it works
@@ -465,9 +510,6 @@ function buildRoutes(): Route[] {
        * that exemption with this reason.
        */
       handle: async (ctx, deps) => {
-        const principal = await authenticate(ctx, deps)
-        requireExactScope(principal, SCOPE_INGEST)
-
         const rawBody = await readRaw(ctx.req)
         verifySignature(deps.ingest, rawBody, headerOf(ctx.req, SIGNATURE_HEADER))
         const delivery = parseDelivery(rawBody)
