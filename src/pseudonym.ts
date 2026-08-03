@@ -203,20 +203,45 @@ export async function eraseSubject(
 ): Promise<{ readonly erased: boolean; readonly alreadyErased: boolean }> {
   const lookupKey = lookupKeyFor(pepper, subject)
 
-  const rows = await sql<{ was_live: boolean }[]>`
-    insert into subject_keys (lookup_key, subject_key, salt, first_seen, last_seen, erased_at)
-    values (${lookupKey}, null, null, ${now}, ${now}, ${now})
-    on conflict (lookup_key) do update
-      set subject_key = null,
-          salt        = null,
-          erased_at   = coalesce(subject_keys.erased_at, ${now})
-    returning (subject_keys.erased_at = ${now}) as was_live
+  /*
+   * `already` is read from the row as it stood BEFORE this statement, not inferred from the
+   * timestamp afterwards.
+   *
+   * This used to return `(subject_keys.erased_at = ${now}) as was_live` — "if the surviving
+   * `erased_at` is the one I just supplied, I am the caller who erased it". That reads as sound
+   * and is not, because `coalesce` keeps the FIRST erasure's timestamp and `Date` resolves to the
+   * millisecond: two erasures landing in the same millisecond carry the same `now`, so the
+   * preserved value equals the second caller's timestamp and the second caller is told it erased
+   * a live subject. Reproduced against Postgres — both calls returned true.
+   *
+   * That is a wrong answer about a right action. The erasure itself was always correct and
+   * idempotent; what was wrong was the report, and this service's report is what the estate's
+   * erasure register records as the acknowledgement. It surfaced as a flaky test because a
+   * collision needs two statements inside one millisecond, which a warm connection manages and a
+   * cold one does not.
+   *
+   * The CTE sees the pre-statement snapshot, so the answer no longer depends on clock resolution,
+   * on how fast the database is, or on the caller passing distinct timestamps.
+   */
+  const rows = await sql<{ already: boolean }[]>`
+    with prior as (
+      select erased_at from subject_keys where lookup_key = ${lookupKey}
+    ), upserted as (
+      insert into subject_keys (lookup_key, subject_key, salt, first_seen, last_seen, erased_at)
+      values (${lookupKey}, null, null, ${now}, ${now}, ${now})
+      on conflict (lookup_key) do update
+        set subject_key = null,
+            salt        = null,
+            erased_at   = coalesce(subject_keys.erased_at, ${now})
+      returning 1
+    )
+    select coalesce((select erased_at from prior) is not null, false) as already from upserted
   `
   const row = rows[0]
   // The INSERT path is an erasure for a subject this service never saw — an acknowledgement, and
   // the tombstone that keeps it that way if an event arrives afterwards.
   if (!row) return { erased: true, alreadyErased: false }
-  return { erased: true, alreadyErased: !row.was_live }
+  return { erased: true, alreadyErased: row.already }
 }
 
 /**

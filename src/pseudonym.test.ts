@@ -266,6 +266,35 @@ describe('pseudonym', { skip }, () => {
       assert.deepEqual(second, { erased: true, alreadyErased: true })
     })
 
+    /*
+     * THE SAME ASSERTION WITH THE CLOCK HELD STILL, because the version above was flaky and the
+     * flakiness was the bug reporting itself.
+     *
+     * `eraseSubject` used to answer "was this already erased?" by comparing the surviving
+     * `erased_at` with the timestamp it had just supplied. `coalesce` keeps the FIRST erasure's
+     * timestamp and `Date` resolves to the millisecond, so two erasures inside one millisecond
+     * carry equal values and the second caller was told it had erased a live subject. Two
+     * `new Date()` calls collide on a warm connection and not on a cold one, which is exactly the
+     * shape of a test that passes on a laptop and fails in CI — it failed there on a commit whose
+     * whole diff was one line of README.
+     *
+     * Passing ONE date to both calls makes the collision certain rather than likely, so this case
+     * fails every time against the old implementation instead of one run in five. A flaky test
+     * teaches people to press rerun; a deterministic one teaches them to read.
+     *
+     * It matters beyond tidiness because this service's answer IS the estate's erasure
+     * acknowledgement: the register records what came back, so a wrong `alreadyErased` writes a
+     * wrong fact about a subject's erasure into another service's audit trail.
+     */
+    it('says already-erased even when both erasures share a millisecond', async () => {
+      await plant(SPIROS)
+      const sameInstant = new Date()
+      const first = await eraseSubject(sql, TEST_PEPPER, SPIROS, sameInstant)
+      const second = await eraseSubject(sql, TEST_PEPPER, SPIROS, sameInstant)
+      assert.deepEqual(first, { erased: true, alreadyErased: false })
+      assert.deepEqual(second, { erased: true, alreadyErased: true }, 'the clock is not the record')
+    })
+
     it('acknowledges an erasure for somebody this service never saw', async () => {
       // The estate's erasure register waits on an acknowledgement from every subscriber
       // (10-migration-strategy.md:507-515). "We have nothing" is an acknowledgement, and the
