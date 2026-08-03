@@ -3,6 +3,8 @@
 The estate's **product analytics plane**: a pseudonymised, append-only product event store fed by
 the event bus, never by a third-party page tag.
 
+Design authority: [`ecosystem/03-repository-responsibilities.md`](https://github.com/cloudsforge-online/micro-docs/blob/main/ecosystem/03-repository-responsibilities.md)
+
 It is a **leaf**. Nothing in the estate calls it and it calls nothing at boot. Its only inputs are
 signed deliveries from other services' outbox relays; its only outputs are aggregates.
 
@@ -386,3 +388,10 @@ docker build -t analytics \
   --build-context runtimepkgs=../runtime \
   --build-context contractspkgs=../contracts .
 ```
+
+---
+
+## Provenance
+
+The code in this repository was written by **Claude Opus 5** and **Claude Fable 5**, under
+human direction and review.
