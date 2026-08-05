@@ -34,7 +34,7 @@ import {
   subjectKeyFor,
   type RawSubject,
 } from './pseudonym.ts'
-import { TEST_PEPPER, migrateTestDb, openDb, resetAnalytics, skip } from './testsupport.ts'
+import { TEST_PEPPER, TEST_PEPPER_V1, migrateTestDb, openDb, resetAnalytics, skip } from './testsupport.ts'
 
 const SPIROS = rawSubject('user:550e8400-e29b-41d4-a716-446655440000')
 const OTHER = rawSubject('user:6ba7b810-9dad-11d1-80b4-00c04fd430c8')
@@ -58,31 +58,31 @@ describe('pseudonym', { skip }, () => {
 
   describe('the construction', () => {
     it('produces a 64-character lowercase hex digest, which is the only shape the store accepts', () => {
-      assert.match(lookupKeyFor(TEST_PEPPER, SPIROS), DIGEST_PATTERN)
-      assert.match(subjectKeyFor(TEST_PEPPER, SPIROS, newSalt()), DIGEST_PATTERN)
+      assert.match(lookupKeyFor(TEST_PEPPER_V1, SPIROS), DIGEST_PATTERN)
+      assert.match(subjectKeyFor(TEST_PEPPER_V1, SPIROS, newSalt()), DIGEST_PATTERN)
     })
 
     it('never contains the subject it was derived from', () => {
-      const key = subjectKeyFor(TEST_PEPPER, SPIROS, newSalt())
+      const key = subjectKeyFor(TEST_PEPPER_V1, SPIROS, newSalt())
       assert.ok(!key.includes('550e8400'), 'the pseudonym leaked part of the subject')
     })
 
     it('is deterministic for the lookup key and NOT deterministic for the pseudonym', () => {
       // The lookup key must be stable, or the same person's second event mints a second identity.
-      assert.equal(lookupKeyFor(TEST_PEPPER, SPIROS), lookupKeyFor(TEST_PEPPER, SPIROS))
+      assert.equal(lookupKeyFor(TEST_PEPPER_V1, SPIROS), lookupKeyFor(TEST_PEPPER_V1, SPIROS))
       // The pseudonym must not be, or erasure has nothing to destroy — see the module header.
       assert.notEqual(
-        subjectKeyFor(TEST_PEPPER, SPIROS, newSalt()),
-        subjectKeyFor(TEST_PEPPER, SPIROS, newSalt()),
+        subjectKeyFor(TEST_PEPPER_V1, SPIROS, newSalt()),
+        subjectKeyFor(TEST_PEPPER_V1, SPIROS, newSalt()),
       )
     })
 
     it('separates its two domains, so a lookup key can never be mistaken for a pseudonym', () => {
-      assert.notEqual(lookupKeyFor(TEST_PEPPER, SPIROS), subjectKeyFor(TEST_PEPPER, SPIROS, ''))
+      assert.notEqual(lookupKeyFor(TEST_PEPPER_V1, SPIROS), subjectKeyFor(TEST_PEPPER_V1, SPIROS, ''))
     })
 
     it('changes completely with the pepper', () => {
-      assert.notEqual(lookupKeyFor(TEST_PEPPER, SPIROS), lookupKeyFor(`${TEST_PEPPER}x`, SPIROS))
+      assert.notEqual(lookupKeyFor(TEST_PEPPER_V1, SPIROS), lookupKeyFor(`${TEST_PEPPER_V1}x`, SPIROS))
     })
 
     it('mints a salt with real entropy', () => {
@@ -92,9 +92,9 @@ describe('pseudonym', { skip }, () => {
     })
 
     it('compares digests in constant time and refuses a non-digest', () => {
-      const key = subjectKeyFor(TEST_PEPPER, SPIROS, newSalt())
+      const key = subjectKeyFor(TEST_PEPPER_V1, SPIROS, newSalt())
       assert.equal(digestsEqual(key, key), true)
-      assert.equal(digestsEqual(key, subjectKeyFor(TEST_PEPPER, OTHER, newSalt())), false)
+      assert.equal(digestsEqual(key, subjectKeyFor(TEST_PEPPER_V1, OTHER, newSalt())), false)
       assert.equal(digestsEqual(key, 'not-a-digest'), false)
     })
   })
@@ -177,7 +177,7 @@ describe('pseudonym', { skip }, () => {
       assert.deepEqual(outcome, { erased: true, alreadyErased: false, sessionsCleared: 0 })
 
       const rows = await sql<{ subject_key: string | null; salt: string | null; erased_at: Date | null }[]>`
-        select subject_key, salt, erased_at from subject_keys where lookup_key = ${lookupKeyFor(TEST_PEPPER, SPIROS)}
+        select subject_key, salt, erased_at from subject_keys where lookup_key = ${lookupKeyFor(TEST_PEPPER_V1, SPIROS)}
       `
       assert.equal(rows.length, 1, 'the tombstone must survive')
       assert.equal(rows[0]?.subject_key, null)
@@ -223,7 +223,7 @@ describe('pseudonym', { skip }, () => {
         for (const { v } of values) {
           inspected += 1
           assert.notEqual(
-            subjectKeyFor(TEST_PEPPER, SPIROS, v),
+            subjectKeyFor(TEST_PEPPER_V1, SPIROS, v),
             key,
             `${column.table_name}.${column.column_name} still holds a value that re-derives the pseudonym`,
           )
@@ -244,7 +244,7 @@ describe('pseudonym', { skip }, () => {
       const key = derived.status === 'ok' ? derived.subjectKey : ''
       const rows = await sql<{ salt: string }[]>`select salt from subject_keys`
       const salt = rows[0]?.salt ?? ''
-      assert.equal(subjectKeyFor(TEST_PEPPER, SPIROS, salt), key, 'a retained salt DOES re-derive it')
+      assert.equal(subjectKeyFor(TEST_PEPPER_V1, SPIROS, salt), key, 'a retained salt DOES re-derive it')
     })
 
     it('a later event for an erased person does not mint a new pseudonym', async () => {
@@ -336,7 +336,7 @@ describe('pseudonym', { skip }, () => {
     }
 
     it('destroys the session identifier, which the salt argument never covered', async () => {
-      const session = hmacHex(TEST_PEPPER, 'cf.analytics.session.v1|browser-session-42')
+      const session = hmacHex(TEST_PEPPER_V1, 'cf.analytics.session.v1|browser-session-42')
       const key = await plantWithSession(SPIROS, session)
 
       // The link exists before erasure, and it is recomputable from the session id alone.
@@ -361,9 +361,9 @@ describe('pseudonym', { skip }, () => {
     it('refuses to commit an erasure that leaves a session behind', async () => {
       // The handler clears the sessions itself. This is the invariant underneath it — migration
       // 8's deferred constraint trigger — so a future edit cannot quietly half-do the erasure.
-      const session = hmacHex(TEST_PEPPER, 'cf.analytics.session.v1|browser-session-43')
+      const session = hmacHex(TEST_PEPPER_V1, 'cf.analytics.session.v1|browser-session-43')
       await plantWithSession(SPIROS, session)
-      const lookupKey = lookupKeyFor(TEST_PEPPER, SPIROS)
+      const lookupKey = lookupKeyFor(TEST_PEPPER_V1, SPIROS)
 
       await assert.rejects(
         () =>

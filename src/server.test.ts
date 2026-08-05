@@ -96,7 +96,7 @@ describe('the HTTP surface', { skip }, () => {
       token: TOKEN,
       minCohort: 5,
       queue,
-      ingest: { sql, logger: quietLogger(), metrics, secrets: [SECRET], pepper: TEST_PEPPER },
+      ingest: { sql, logger: quietLogger(), metrics, secrets: [SECRET], peppers: TEST_PEPPER },
       beforeScrape: scrapeRefresh({ sql, metrics }),
     }
     const server: Server = createServer(deps)

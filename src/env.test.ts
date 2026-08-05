@@ -62,6 +62,57 @@ describe('env', () => {
       )
     })
 
+    it('accepts the unsuffixed name as v1, which every existing mapping depends on', () => {
+      // LOAD-BEARING. Mappings minted before #189 derive from the value this variable held, and
+      // there is no way to re-derive them under another name — the raw subject is not stored and
+      // HMAC does not run backwards. Renaming the variable would orphan every existing pseudonym,
+      // which is the exact damage the fix exists to prevent.
+      const env = loadEnv(BASE)
+      assert.deepEqual([...env.pseudonymKeys.keys()], [1])
+      assert.equal(env.pseudonymVersion, 1)
+    })
+
+    it('mints under the highest pepper supplied', () => {
+      const env = loadEnv({ ...BASE, ANALYTICS_PSEUDONYM_KEY_V2: 'a-second-real-looking-pepper-0123456789ab' })
+      assert.deepEqual([...env.pseudonymKeys.keys()].sort((a, b) => a - b), [1, 2])
+      assert.equal(env.pseudonymVersion, 2)
+    })
+
+    it('refuses a mint version it holds no pepper for', () => {
+      // Minting under a pepper it cannot look up would orphan every subject it then created.
+      assert.throws(
+        () => loadEnv({ ...BASE, ANALYTICS_PSEUDONYM_VERSION: '2' }),
+        (err: unknown) => err instanceof EnvError && /ANALYTICS_PSEUDONYM_KEY_V2 is not set/.test(err.message),
+      )
+    })
+
+    it('refuses two identical peppers — a rotation that did not rotate', () => {
+      // Both versions would derive the same lookup key, so the old one could never be retired and
+      // `subjectsBelowVersion` would report progress that had not happened.
+      assert.throws(
+        () => loadEnv({ ...BASE, ANALYTICS_PSEUDONYM_KEY_V2: BASE['ANALYTICS_PSEUDONYM_KEY']! }),
+        (err: unknown) => err instanceof EnvError && /identical/.test(err.message),
+      )
+    })
+
+    it('refuses two different values both claiming v1 rather than guessing', () => {
+      assert.throws(
+        () => loadEnv({ ...BASE, ANALYTICS_PSEUDONYM_KEY_V1: 'a-different-v1-pepper-0123456789abcdef' }),
+        (err: unknown) => err instanceof EnvError && /both set and differ/.test(err.message),
+      )
+    })
+
+    it('holds a versioned pepper to the same floor and placeholder rules', () => {
+      assert.throws(
+        () => loadEnv({ ...BASE, ANALYTICS_PSEUDONYM_KEY_V2: 'short' }),
+        (err: unknown) => err instanceof EnvError && /at least 32/.test(err.message),
+      )
+      assert.throws(
+        () => loadEnv({ ...BASE, ANALYTICS_PSEUDONYM_KEY_V2: 'CHANGE_ME_TO_32_RANDOM_CHARACTERS_OK' }),
+        (err: unknown) => err instanceof EnvError && /placeholder/.test(err.message),
+      )
+    })
+
     it('never puts the value in the error message', () => {
       // The fatal handler writes `err.message` to stderr, where the collector picks it up. A
       // message carrying the pepper would put it in Loki, in every backup of Loki, and in the

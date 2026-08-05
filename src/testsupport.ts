@@ -22,6 +22,7 @@ import { migrate, type Sql } from '@cloudsforge/db'
 import { Logger, Metrics } from '@cloudsforge/telemetry'
 import { MIGRATIONS, TABLES } from './migrations.ts'
 import { registerServiceMetrics } from './server.ts'
+import { PepperRing } from './pseudonym.ts'
 
 // Named `TEST_DSN_VAR` rather than `..._DATABASE_URL_...` on purpose: the estate's Rule 1 CI check
 // greps source for any `*_DATABASE_URL` token that is not this service's own, and a constant NAMED
@@ -74,4 +75,16 @@ export function testMetrics(): Metrics {
  * A pepper for tests. Long enough to satisfy `env.ts`, and constant so a test can assert that the
  * SAME subject derives the SAME pseudonym across calls — which is the property funnels rest on.
  */
-export const TEST_PEPPER = 'test-pepper-not-a-real-one-0123456789abcdef'
+export const TEST_PEPPER_V1 = 'test-pepper-not-a-real-one-0123456789abcdef'
+
+/** The pepper a rotation moves TO. Distinct from v1, which `env.ts` insists on. */
+export const TEST_PEPPER_V2 = 'rotated-test-pepper-fedcba9876543210fedcba'
+
+/**
+ * The ring every non-rotation test runs under: one pepper, minting at v1.
+ *
+ * A `PepperRing` rather than a bare string since #189. Tests take the ring so that the rotation
+ * tests can hand the same functions a ring holding two peppers and assert what changes — which a
+ * string could not express.
+ */
+export const TEST_PEPPER = new PepperRing(new Map([[1, TEST_PEPPER_V1]]), 1)

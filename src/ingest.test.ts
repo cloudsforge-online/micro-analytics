@@ -21,7 +21,7 @@ import {
 import { ERASURE_TOPIC } from './catalogue.ts'
 import { ingest, parseDelivery, verifySignature, type IngestDeps } from './ingest.ts'
 import { isAttributable, lookupKeyFor, rawSubject } from './pseudonym.ts'
-import { TEST_PEPPER, migrateTestDb, openDb, quietLogger, resetAnalytics, skip, testMetrics } from './testsupport.ts'
+import { TEST_PEPPER, TEST_PEPPER_V1, migrateTestDb, openDb, quietLogger, resetAnalytics, skip, testMetrics } from './testsupport.ts'
 
 const SECRET = 'a-delivery-secret-of-sufficient-length'
 const SPIROS = 'user:550e8400-e29b-41d4-a716-446655440000'
@@ -42,7 +42,7 @@ describe('ingest', { skip }, () => {
       logger: quietLogger(),
       metrics: testMetrics(),
       secrets: [SECRET],
-      pepper: TEST_PEPPER,
+      peppers: TEST_PEPPER,
     }
   })
   after(async () => {
@@ -431,7 +431,7 @@ describe('ingest', { skip }, () => {
       await deliver(erasureEnvelope(SPIROS))
       const rows = await sql<{ lookup_key: string; salt: string | null }[]>`select lookup_key, salt from subject_keys`
       assert.equal(rows.length, 1)
-      assert.equal(rows[0]?.lookup_key, lookupKeyFor(TEST_PEPPER, rawSubject(SPIROS)))
+      assert.equal(rows[0]?.lookup_key, lookupKeyFor(TEST_PEPPER_V1, rawSubject(SPIROS)))
       assert.equal(rows[0]?.salt, null)
     })
   })

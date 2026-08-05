@@ -41,6 +41,7 @@ import { SCHEMA_VERSION } from './migrations.ts'
 import { createServer, registerServiceMetrics, scrapeRefresh } from './server.ts'
 import { registerHandlers, rescheduleRecurring, sampleQueue, seedRecurring } from './jobs.ts'
 import { publish } from './definitions.ts'
+import { PepperRing } from './pseudonym.ts'
 
 // 1. Environment. Importing `./env.ts` validated it; a missing or placeholder pepper has already
 //    exited with a structured line naming the variable and never its value.
@@ -54,7 +55,7 @@ const logger = new Logger({
   env: env.env,
   // The pepper is never passed to a logger, but a redaction key costs nothing and closes the
   // accident where somebody logs the whole config object while debugging.
-  redactKeys: ['pseudonymKey', 'pepper', 'deliverySecrets'],
+  redactKeys: ['pseudonymKey', 'pseudonymKeys', 'pepper', 'peppers', 'deliverySecrets'],
 })
 const metrics = registerServiceMetrics(registerJobMetrics(registerHttpMetrics(new Metrics())))
 logger.info('starting', {
@@ -133,7 +134,7 @@ const server = createServer({
     logger,
     metrics,
     secrets: env.deliverySecrets,
-    pepper: env.pseudonymKey,
+    peppers: new PepperRing(env.pseudonymKeys, env.pseudonymVersion),
   },
   // Gauges are sampled at scrape time rather than on a timer. There is no `setInterval` in this
   // repository and CI greps for one — rule 8.

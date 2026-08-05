@@ -101,6 +101,71 @@ function optional(source: Source, name: string, fallback: string): string {
   return value && value.length > 0 ? value : fallback
 }
 
+const PEPPER_PREFIX = 'ANALYTICS_PSEUDONYM_KEY_V'
+const LEGACY_PEPPER = 'ANALYTICS_PSEUDONYM_KEY'
+
+/**
+ * The pepper ring: every `ANALYTICS_PSEUDONYM_KEY_V<n>` present, plus the version that mints.
+ *
+ * **THE UNSUFFIXED NAME IS ACCEPTED AS V1, AND IT HAS TO BE.** Every mapping minted before this
+ * existed was derived from the value `ANALYTICS_PSEUDONYM_KEY` held, and there is no way to
+ * re-derive those rows under any other name — the raw subject is not stored and HMAC is one-way.
+ * If shipping #189's fix required renaming the variable, the fix would itself orphan every existing
+ * pseudonym, which is the exact damage it exists to prevent.
+ *
+ * 32 rather than the estate's usual 24: this is the value whose disclosure retroactively undoes the
+ * privacy property of four hundred days of data; it is worth eight more characters.
+ */
+function parsePseudonymKeys(source: Source): {
+  pseudonymKeys: ReadonlyMap<number, string>
+  pseudonymVersion: number
+} {
+  const peppers = new Map<number, string>()
+
+  for (const name of Object.keys(source)) {
+    if (!name.startsWith(PEPPER_PREFIX)) continue
+    const suffix = name.slice(PEPPER_PREFIX.length)
+    if (!/^[0-9]{1,3}$/.test(suffix)) continue
+    const version = Number(suffix)
+    if (version < 1) throw new EnvError(`${name}: pepper versions start at 1`)
+    if (!source[name]?.trim()) continue
+    peppers.set(version, requiredSecret(source, name, 32))
+  }
+
+  const legacy = source[LEGACY_PEPPER]?.trim()
+  if (legacy) {
+    const explicit = peppers.get(1)
+    if (explicit !== undefined && explicit !== legacy) {
+      throw new EnvError(
+        `${LEGACY_PEPPER} and ${PEPPER_PREFIX}1 are both set and differ — keep ${PEPPER_PREFIX}1 and remove the unsuffixed one`,
+      )
+    }
+    if (explicit === undefined) peppers.set(1, requiredSecret(source, LEGACY_PEPPER, 32))
+  }
+
+  if (peppers.size === 0) {
+    throw new EnvError(`${PEPPER_PREFIX}1 is required — ${SERVICE} refuses to start without a pepper`)
+  }
+
+  // Two peppers with the same value is a rotation that did not rotate: every subject would derive
+  // to one lookup key under both versions, so the "old" one could never be retired and the gauge
+  // would report progress that had not happened. `parseSecrets` refuses the same thing, for the
+  // same reason.
+  const distinct = new Set(peppers.values())
+  if (distinct.size !== peppers.size) {
+    throw new EnvError(`two ${PEPPER_PREFIX}<n> values are identical — that is a rotation that did not rotate`)
+  }
+
+  const highest = Math.max(...peppers.keys())
+  const pseudonymVersion = integer(source, 'ANALYTICS_PSEUDONYM_VERSION', highest, 1, 999)
+  if (!peppers.has(pseudonymVersion)) {
+    throw new EnvError(
+      `ANALYTICS_PSEUDONYM_VERSION is ${pseudonymVersion} but ${PEPPER_PREFIX}${pseudonymVersion} is not set — this process would mint pseudonyms it cannot look up`,
+    )
+  }
+  return { pseudonymKeys: peppers, pseudonymVersion }
+}
+
 function integer(source: Source, name: string, fallback: number, min: number, max: number): number {
   const raw = source[name]?.trim()
   if (!raw) return fallback
@@ -157,12 +222,29 @@ export interface Env {
   readonly instanceId: string
 
   /**
-   * The pepper. See the file header, and `src/pseudonym.ts` for what it is used for.
+   * The peppers, BY VERSION — `ANALYTICS_PSEUDONYM_KEY_V<n>`. See the file header, and
+   * `src/pseudonym.ts` for what they are used for and for how a rotation works.
    *
-   * It exists in this process's memory and in the deploy's secret store, and in no third place:
-   * it is never written to this service's database, never logged, and never returned by a route.
+   * They exist in this process's memory and in the deploy's secret store, and in no third place:
+   * never written to this service's database, never logged, never returned by a route.
+   *
+   * A MAP rather than a string, and that is #189's fix. With one value, replacing it re-derived
+   * every returning subject to a new lookup key — one person silently became two pseudonyms, their
+   * history was orphaned, and **erasure stopped reaching pre-rotation rows**. Holding every pepper
+   * at once means an old mapping is still found from the raw subject, which is what keeps erasure
+   * whole across a rotation.
    */
-  readonly pseudonymKey: string
+  readonly pseudonymKeys: ReadonlyMap<number, string>
+  /**
+   * The version new subjects are MINTED under. Must be present in `pseudonymKeys`.
+   *
+   * Defaults to the highest supplied, so a deployment holding one pepper needs no new variable.
+   * Unlike identity's key secret there is no drain to run afterwards — old mappings keep their old
+   * lookup key for ever, because HMAC does not run backwards — so the old pepper stays in this map
+   * until retention has pruned every row that predates the rotation. `subjectsBelowVersion` says
+   * when that is.
+   */
+  readonly pseudonymVersion: number
 
   /** The credential Prometheus presents in `x-analytics-token` to reach `/metrics`. */
   readonly token: string
@@ -227,9 +309,7 @@ export function loadEnv(source: Source = process.env, host = ''): Env {
     identityIssuer: required(source, 'IDENTITY_ISSUER'),
     instanceId: optional(source, 'INSTANCE_ID', host || 'unknown'),
 
-    // 32 rather than the estate's usual 24. This is the value whose disclosure retroactively
-    // undoes the privacy property of four hundred days of data; it is worth eight more characters.
-    pseudonymKey: requiredSecret(source, 'ANALYTICS_PSEUDONYM_KEY', 32),
+    ...parsePseudonymKeys(source),
     token: requiredSecret(source, 'ANALYTICS_TOKEN'),
     deliverySecrets: parseSecrets(required(source, 'ANALYTICS_DELIVERY_SECRETS'), 'ANALYTICS_DELIVERY_SECRETS'),
 

@@ -63,7 +63,7 @@ import {
 import type { Logger, Metrics } from '@cloudsforge/telemetry'
 import { ERASURE_TOPIC, eventFor } from './catalogue.ts'
 import { sanitise, tally, type RejectionReason } from './properties.ts'
-import { deriveSubject, eraseSubject, hmacHex, rawSubject } from './pseudonym.ts'
+import { deriveSubject, eraseSubject, rawSubject, type PepperRing } from './pseudonym.ts'
 import { countRejections, insertEvent, type Db, type SubjectKind } from './store.ts'
 
 export class DeliverySignatureError extends Error {
@@ -90,8 +90,13 @@ export interface IngestDeps {
   readonly metrics: Metrics
   /** Delivery-signature secrets, newest first. A list, so a rotation is a window. */
   readonly secrets: readonly string[]
-  /** The pepper. Never logged, never stored, never returned. */
-  readonly pepper: string
+  /**
+   * The peppers, newest first on lookup. Never logged, never stored, never returned.
+   *
+   * A ring rather than one value since #189: a rotation must not orphan the mappings the old pepper
+   * minted, because erasure reaches them through exactly this object.
+   */
+  readonly peppers: PepperRing
   readonly toleranceMs?: number
   /** A seam, so the lag histogram and the freshness window can both be tested. */
   readonly now?: () => number
@@ -275,7 +280,7 @@ export async function ingest(deps: IngestDeps, delivery: ParsedDelivery): Promis
         await countRejections(tx, day, topicLabel, new Map([['missing_subject', 1] as const]))
         return { result: { status: 'refused', reason: 'missing_subject' } as IngestOutcome }
       }
-      const erasure = await eraseSubject(tx, deps.pepper, rawSubject(`user:${userId}`), new Date(receivedAt))
+      const erasure = await eraseSubject(tx, deps.peppers, rawSubject(`user:${userId}`), new Date(receivedAt))
       return { result: { status: 'erased', alreadyErased: erasure.alreadyErased } as IngestOutcome }
     }
 
@@ -298,7 +303,7 @@ export async function ingest(deps: IngestDeps, delivery: ParsedDelivery): Promis
     let subjectKind: SubjectKind = 'system'
 
     if (named) {
-      const derived = await deriveSubject(tx, deps.pepper, rawSubject(named.subject), new Date(envelope.occurredAt))
+      const derived = await deriveSubject(tx, deps.peppers, rawSubject(named.subject), new Date(envelope.occurredAt))
       if (derived.status === 'erased') {
         // A late event for somebody who asked to be forgotten. Minting a fresh pseudonym would
         // start a second behavioural profile for them, which is the opposite of what was asked.
@@ -325,7 +330,7 @@ export async function ingest(deps: IngestDeps, delivery: ParsedDelivery): Promis
       occurredAt: envelope.occurredAt,
       // Pseudonymised with the same pepper under its own domain string, so a browser session id
       // that leaks anywhere else in the estate cannot be used to select rows here.
-      session: clean.sessionId ? hmacHex(deps.pepper, `cf.analytics.session.v1|${clean.sessionId}`) : null,
+      session: clean.sessionId ? deps.peppers.sessionKeyFor(clean.sessionId) : null,
       props: clean.props,
       sourceEventId: envelope.id,
       sourceTopic: envelope.topic,

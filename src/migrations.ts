@@ -497,6 +497,51 @@ export const MIGRATIONS: readonly Migration[] = [
         for each row execute function analytics_assert_erasure_unlinked();
     `,
   },
+
+  {
+    version: 9,
+    name: 'pepper-version-on-subject-keys',
+    up: `
+      -- ════════════════════════════════════════════════════════════════════════════════════════
+      -- WHICH PEPPER MINTED THIS MAPPING (#189).
+      --
+      -- \`ANALYTICS_PSEUDONYM_KEY\` was published, so it has to be replaceable, and replacing it
+      -- naively re-derives every returning subject to a NEW lookup key: one person becomes two
+      -- pseudonyms, their history is orphaned, and erasure by subject stops reaching pre-rotation
+      -- rows. That last one is a compliance regression, not a data-quality one.
+      --
+      -- The fix is a ring of peppers rather than a drain, and it cannot be a drain: \`lookup_key\`
+      -- is HMAC(pepper, subject) and the raw subject is never stored — there is no user_id column,
+      -- \`events_subject_shape\` refuses one, and HMAC does not run backwards. So old rows keep
+      -- their old lookup key for ever and are found by deriving a candidate under every pepper
+      -- held. See the rotation note at the top of src/pseudonym.ts.
+      --
+      -- This column does not participate in that lookup. It exists to answer one operational
+      -- question — WHEN MAY THE OLD PEPPER BE REMOVED — which is "when no live row is below the
+      -- current version" (\`subjectsBelowVersion\`). Without it that question is unanswerable and
+      -- an operator drops a pepper that rows still need, breaking erasure for them silently.
+      --
+      -- DEFAULT 1 IS THE HONEST BACKFILL. Every row that exists when this runs was minted by the
+      -- single-pepper code, which is v1 by definition. It is not a guess.
+      --
+      -- Not in FORBIDDEN_COLUMNS territory: it is a small integer naming a key version, and it is
+      -- not derived from, and cannot be joined to, anything about a person.
+      -- ════════════════════════════════════════════════════════════════════════════════════════
+      alter table subject_keys
+        add column if not exists pepper_version integer not null default 1;
+
+      alter table subject_keys
+        drop constraint if exists subject_keys_pepper_version_positive;
+      alter table subject_keys
+        add constraint subject_keys_pepper_version_positive check (pepper_version >= 1);
+
+      -- The gauge's access path: "are there still live mappings below the current pepper?" is a
+      -- question asked repeatedly during a rotation and never at any other time, so the index is
+      -- partial on exactly those rows and stays tiny.
+      create index if not exists subject_keys_pepper_version_idx
+        on subject_keys (pepper_version) where erased_at is null;
+    `,
+  },
 ]
 
 /** Every table this service owns. The truncate list for the test harness, and nothing else. */
