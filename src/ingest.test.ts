@@ -66,6 +66,29 @@ describe('ingest', { skip }, () => {
     )
   }
 
+  /**
+   * The `identity.user.deleted` envelope AS IDENTITY SENDS IT.
+   *
+   * `payload: { userId, tombstoneAt, reason }`, key = the bare user id
+   * (`identity/src/deletion.ts:113-125`). The `actor` is whoever ASKED for the deletion, which is
+   * the user only when they deleted themselves — so it is deliberately set to an operator here by
+   * default. These tests used to pass `{ actor: SPIROS }` with an empty payload, which is why the
+   * handler reading `actor` looked correct: the test and the handler agreed with each other and
+   * neither agreed with the producer.
+   */
+  function erasureEnvelope(subject: string, options: { actor?: Actor } = {}): string {
+    const userId = subject.startsWith('user:') ? subject.slice('user:'.length) : subject
+    return serialiseEvent(
+      makeEvent({
+        topic: ERASURE_TOPIC as TopicName,
+        key: userId,
+        actor: options.actor ?? ('operator:support-7' as Actor),
+        payload: { userId, tombstoneAt: '2026-07-01T10:00:00.000Z', reason: 'user_requested' },
+        occurredAt: new Date('2026-06-01T10:00:00.000Z'),
+      }) as EventEnvelope,
+    )
+  }
+
   /** A forward-declared UI topic, which `makeEvent` cannot build because it is unregistered. */
   function webEnvelope(topic: string, payload: unknown, actor: string = SPIROS): string {
     return JSON.stringify({
@@ -329,7 +352,7 @@ describe('ingest', { skip }, () => {
     it('refuses an event about somebody who asked to be forgotten', async () => {
       await deliver(envelope('identity.user.registered', {}, { actor: SPIROS as Actor }))
       await deliver(
-        envelope(ERASURE_TOPIC as TopicName, {}, { actor: SPIROS as Actor, key: 'u-1' }),
+        erasureEnvelope(SPIROS),
       )
       const late = await deliver(envelope('wallet.deposit.confirmed', { analytics: { subject: SPIROS } }))
       assert.equal(late.status, 'refused')
@@ -344,7 +367,7 @@ describe('ingest', { skip }, () => {
   describe('erasure through the bus', () => {
     it('destroys the salt and writes no event of its own', async () => {
       await deliver(envelope('identity.user.registered', {}, { actor: SPIROS as Actor }))
-      const outcome = await deliver(envelope(ERASURE_TOPIC as TopicName, {}, { actor: SPIROS as Actor }))
+      const outcome = await deliver(erasureEnvelope(SPIROS))
       assert.equal(outcome.status, 'erased')
 
       // No row saying "this pseudonym was erased" — that would be a record about the person who
@@ -355,7 +378,7 @@ describe('ingest', { skip }, () => {
     })
 
     it('acknowledges through the inbox, so the relay stops redelivering', async () => {
-      await deliver(envelope(ERASURE_TOPIC as TopicName, {}, { actor: SPIROS as Actor }))
+      await deliver(erasureEnvelope(SPIROS))
       const rows = await sql<{ topic: string }[]>`select topic from inbox`
       assert.deepEqual(rows.map((row) => row.topic), [ERASURE_TOPIC])
     })
@@ -363,9 +386,39 @@ describe('ingest', { skip }, () => {
     it('erases only the person it names', async () => {
       await deliver(envelope('identity.user.registered', {}, { actor: SPIROS as Actor }))
       await deliver(envelope('identity.user.registered', {}, { actor: OTHER as Actor }))
-      await deliver(envelope(ERASURE_TOPIC as TopicName, {}, { actor: SPIROS as Actor }))
+      await deliver(erasureEnvelope(SPIROS))
       assert.equal(await isAttributable(sql, TEST_PEPPER, rawSubject(SPIROS)), false)
       assert.equal(await isAttributable(sql, TEST_PEPPER, rawSubject(OTHER)), true)
+    })
+
+    it('erases the user the event NAMES, not the operator who requested it', async () => {
+      // ═══════════════════════════════════════════════════════════════════════════════════════
+      // The handler read `envelope.actor`. On this topic the actor is whoever ASKED for the
+      // deletion — `identity/src/deletion.ts:120` sets it from `input.actor` — so an erasure
+      // raised by support destroyed the SUPPORT OPERATOR's salt and left the account that asked
+      // to be forgotten fully attributable. Data loss for one person and a null erasure for
+      // another, from one line.
+      // ═══════════════════════════════════════════════════════════════════════════════════════
+      const operator = 'operator:support-7'
+      await deliver(envelope('identity.user.registered', {}, { actor: SPIROS as Actor }))
+      await deliver(
+        envelope('wallet.deposit.confirmed', { analytics: { subject: operator } }, { actor: 'service:wallet' }),
+      )
+      assert.equal(await isAttributable(sql, TEST_PEPPER, rawSubject(operator)), true)
+
+      const outcome = await deliver(erasureEnvelope(SPIROS, { actor: operator as Actor }))
+      assert.equal(outcome.status, 'erased')
+
+      assert.equal(
+        await isAttributable(sql, TEST_PEPPER, rawSubject(SPIROS)),
+        false,
+        'the account that asked to be forgotten is still attributable',
+      )
+      assert.equal(
+        await isAttributable(sql, TEST_PEPPER, rawSubject(operator)),
+        true,
+        "the requesting operator's own pseudonym was destroyed",
+      )
     })
 
     it('refuses an erasure that names nobody', async () => {
@@ -375,7 +428,7 @@ describe('ingest', { skip }, () => {
     })
 
     it('leaves a tombstone under the lookup key and nothing else', async () => {
-      await deliver(envelope(ERASURE_TOPIC as TopicName, {}, { actor: SPIROS as Actor }))
+      await deliver(erasureEnvelope(SPIROS))
       const rows = await sql<{ lookup_key: string; salt: string | null }[]>`select lookup_key, salt from subject_keys`
       assert.equal(rows.length, 1)
       assert.equal(rows[0]?.lookup_key, lookupKeyFor(TEST_PEPPER, rawSubject(SPIROS)))

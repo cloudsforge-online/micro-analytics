@@ -194,13 +194,47 @@ export async function deriveSubject(
  * historical funnel and cohort number — which 13-operational-model.md:637 forbids in the strongest
  * terms it uses anywhere ("a retention number that changed definition in March is a chart that
  * lies about February").
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * **AND `events.session`, WHICH THE SALT ARGUMENT DOES NOT COVER.**
+ *
+ * The paragraph above is only true of `subject_key`. `session` is a SECOND identifier on the same
+ * rows, and it is derived on a completely different path: `hmacHex(pepper, 'cf.analytics.session
+ * .v1|' + sessionId)` (`ingest.ts`). No per-subject salt goes into it, so destroying the salt does
+ * nothing to it whatsoever.
+ *
+ * That leaves two live re-identification routes through a subject this service reports as erased:
+ *
+ *   1. **Recomputation.** The construction is deterministic under a pepper that is never destroyed
+ *      — it cannot be, it keys every other subject in the table. Anyone holding the pepper and a
+ *      candidate session id computes the digest and selects that person's rows directly. A browser
+ *      session id is not a secret: it is in the client, in front-end logs, and in whatever other
+ *      system minted it.
+ *   2. **Linkage.** Rows sharing a session are one person's, so the orphaned events re-cluster into
+ *      per-person groups even without the pepper — and a group joined to any dated external record
+ *      is attributable again. "Unlinkable" is precisely the property GDPR Recital 26 asks for when
+ *      deciding whether data is anonymous, and a surviving session id is a link.
+ *
+ * So erasure nulls it. The cost is one session-scoped metric losing an erased person's sessions,
+ * which is the correct trade and much smaller than it sounds: the rows still count towards every
+ * event total, and `subject_key` — not `session` — is what funnels and cohorts group by.
+ *
+ * `analytics_erasure_leaves_no_session` (migration 8) is the belt to this brace: a transaction that
+ * sets `erased_at` and leaves a session behind is refused at commit, so this cannot be quietly
+ * half-done by a future edit.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
  */
 export async function eraseSubject(
   sql: SubjectStore,
   pepper: string,
   subject: RawSubject,
   now: Date,
-): Promise<{ readonly erased: boolean; readonly alreadyErased: boolean }> {
+): Promise<{
+  readonly erased: boolean
+  readonly alreadyErased: boolean
+  /** Rows whose surviving session identifier was destroyed. Counted, never logged with a value. */
+  readonly sessionsCleared: number
+}> {
   const lookupKey = lookupKeyFor(pepper, subject)
 
   /*
@@ -223,6 +257,37 @@ export async function eraseSubject(
    * The CTE sees the pre-statement snapshot, so the answer no longer depends on clock resolution,
    * on how fast the database is, or on the caller passing distinct timestamps.
    */
+  // ── THE SESSIONS GO FIRST, AND THE ORDER IS LOAD-BEARING ────────────────────────────────
+  //
+  // The pseudonym is the only handle on this person's rows, and the upsert below destroys it —
+  // so the sessions have to be cleared while it can still be read. Doing it afterwards would
+  // mean reading a value that no longer exists anywhere.
+  //
+  // It also makes this function correct when it is handed a POOL rather than a transaction.
+  // `SubjectStore` is `Db | Tx` deliberately, and on a pool each statement commits on its own:
+  // with the upsert first, `analytics_erasure_unlinked` fires at that commit, finds the sessions
+  // still present, and refuses an erasure that was about to complete one statement later. In
+  // this order the invariant is already satisfied whichever way the caller sequences it, and
+  // inside a transaction — which is how `ingest` calls it — the deferred check still guarantees
+  // the pair committed together.
+  //
+  // A re-erasure finds `subject_key` already null and clears nothing, which is the right
+  // idempotent answer rather than a special case.
+  const existing = await sql<{ subject_key: string | null }[]>`
+    select subject_key from subject_keys where lookup_key = ${lookupKey}
+  `
+  const priorKey = existing[0]?.subject_key ?? null
+
+  let sessionsCleared = 0
+  if (priorKey !== null) {
+    const cleared = await sql<{ id: string }[]>`
+      update events set session = null
+       where subject_key = ${priorKey} and session is not null
+      returning id
+    `
+    sessionsCleared = cleared.length
+  }
+
   const rows = await sql<{ already: boolean }[]>`
     with prior as (
       select erased_at from subject_keys where lookup_key = ${lookupKey}
@@ -240,8 +305,8 @@ export async function eraseSubject(
   const row = rows[0]
   // The INSERT path is an erasure for a subject this service never saw — an acknowledgement, and
   // the tombstone that keeps it that way if an event arrives afterwards.
-  if (!row) return { erased: true, alreadyErased: false }
-  return { erased: true, alreadyErased: row.already }
+  if (!row) return { erased: true, alreadyErased: false, sessionsCleared }
+  return { erased: true, alreadyErased: row.already, sessionsCleared }
 }
 
 /**

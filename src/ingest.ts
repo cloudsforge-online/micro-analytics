@@ -244,12 +244,38 @@ export async function ingest(deps: IngestDeps, delivery: ParsedDelivery): Promis
      * which is the thing being asked for. The inbox row is the acknowledgement.
      */
     if (envelope.topic === ERASURE_TOPIC) {
-      const subject = subjectOf(envelope)
-      if (!subject) {
+      // ══════════════════════════════════════════════════════════════════════════════════════
+      // **THE SUBJECT IS `payload.userId`. IT WAS `envelope.actor`, WHICH IS WHOEVER ASKED.**
+      //
+      // This read `subjectOf(envelope)`, and `subjectOf` returns `envelope.actor`. On every other
+      // topic that is right — the actor is the person the event is about. On THIS topic it is the
+      // principal who requested the deletion, and identity sets it from `input.actor`
+      // (`identity/src/deletion.ts:120`), which is the deleted user only when the user deleted
+      // themselves.
+      //
+      // So an operator-initiated or service-initiated deletion destroyed the OPERATOR's salt —
+      // erasing a live colleague's four hundred days of behaviour — or, for a `service:` actor,
+      // was refused as `missing_subject` while the account it named kept its pseudonym and stayed
+      // fully attributable. Both are wrong, and one of them is data loss for somebody who never
+      // asked for it.
+      //
+      // `payload.userId` is the authoritative statement of WHO WAS DELETED, and it is the only
+      // field on this topic that means that. The `user:` prefix is added explicitly rather than
+      // incidentally: `deriveSubject` keys every normal event on `envelope.actor`, which is spelled
+      // `user:<uuid>`, so an erasure computed over a bare uuid would hash to a different lookup key
+      // and tombstone a subject that has no events while leaving the real one untouched.
+      // ══════════════════════════════════════════════════════════════════════════════════════
+      const payload =
+        typeof envelope.payload === 'object' && envelope.payload !== null
+          ? (envelope.payload as Record<string, unknown>)
+          : {}
+      const named = typeof payload['userId'] === 'string' ? payload['userId'] : ''
+      const userId = named.startsWith('user:') ? named.slice('user:'.length) : named
+      if (!UUID.test(userId)) {
         await countRejections(tx, day, topicLabel, new Map([['missing_subject', 1] as const]))
         return { result: { status: 'refused', reason: 'missing_subject' } as IngestOutcome }
       }
-      const erasure = await eraseSubject(tx, deps.pepper, rawSubject(subject.subject), new Date(receivedAt))
+      const erasure = await eraseSubject(tx, deps.pepper, rawSubject(`user:${userId}`), new Date(receivedAt))
       return { result: { status: 'erased', alreadyErased: erasure.alreadyErased } as IngestOutcome }
     }
 

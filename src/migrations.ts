@@ -398,6 +398,105 @@ export const MIGRATIONS: readonly Migration[] = [
       create index if not exists idempotency_keys_created_idx on idempotency_keys (created_at);
     `,
   },
+
+  {
+    version: 8,
+    name: 'erasure-clears-the-session',
+    up: `
+      -- ════════════════════════════════════════════════════════════════════════════════════════
+      -- ERASURE HAS TO REACH \`events.session\`, AND APPEND-ONLY SAID IT COULD NOT.
+      --
+      -- \`subject_keys_erased\` (migration 3) makes the salt destruction real, and the argument
+      -- attached to it — after the salt is gone the events identify nobody — is true of
+      -- \`subject_key\` and ONLY of \`subject_key\`.
+      --
+      -- \`session\` is a second identifier on the same rows, derived on a different path:
+      -- HMAC(pepper, 'cf.analytics.session.v1|' || session_id), with no per-subject salt in it at
+      -- all. Destroying the salt therefore does nothing to it. It stays deterministic under a
+      -- pepper that can never be destroyed — the pepper keys every other subject in the table —
+      -- so anyone holding the pepper and a candidate session id recomputes the digest and selects
+      -- an "erased" person's rows directly; and even without the pepper, rows sharing a session
+      -- re-cluster into one person's history. Recital 26 asks whether the data can be linked back
+      -- to an individual, and a surviving session identifier is exactly such a link.
+      --
+      -- ── WHY THIS RELAXES APPEND-ONLY, AND HOW FAR ─────────────────────────────────────────
+      --
+      -- \`analytics_events_immutable\` existed so that "analytics computes, it does not correct":
+      -- an event store whose rows can be rewritten is a record of what somebody last SAID
+      -- happened. That argument is about CORRECTING A FACT, and it is still enforced below.
+      --
+      -- Clearing an identifier is not correcting a fact. Nothing about what happened, when, to
+      -- what kind of subject, or under which event name changes; a link is removed. The exception
+      -- is therefore made as narrow as it can be expressed rather than by dropping the trigger:
+      --
+      --   * only \`session\` may differ,
+      --   * only from non-null to NULL — never to another value, so no row can be re-keyed,
+      --   * every other column must be byte-identical.
+      --
+      -- The comparison is \`to_jsonb(new) - 'session'\` against the same of \`old\` rather than a
+      -- list of column names on purpose: a column added by a later migration is covered by this
+      -- rule automatically, where an enumerated list would silently stop protecting it.
+      --
+      -- This is the same move \`micro-community\` made for the same reason — its
+      -- \`community_refuse_vote_update\` permits \`subject\` and \`cast_by\` to be rewritten by the
+      -- erasure handler and refuses \`choice\`, \`weight\` and \`proposal_id\` outright — because
+      -- refusing the whole UPDATE does not make the record safer, it makes erasure impossible
+      -- without a DELETE, which is strictly worse.
+      -- ════════════════════════════════════════════════════════════════════════════════════════
+      create or replace function analytics_events_no_update() returns trigger as $$
+      begin
+        if new.session is null
+           and old.session is not null
+           and (to_jsonb(new) - 'session') = (to_jsonb(old) - 'session') then
+          return new;
+        end if;
+        raise exception
+          'events is append-only; the only permitted update is GDPR erasure clearing session';
+      end;
+      $$ language plpgsql;
+
+      -- ════════════════════════════════════════════════════════════════════════════════════════
+      -- AN ERASURE THAT LEAVES A SESSION BEHIND DOES NOT COMMIT.
+      --
+      -- The handler in \`pseudonym.ts\` nulls the sessions in the same transaction that sets
+      -- \`erased_at\`. This is the invariant underneath that, so it cannot be quietly half-done by
+      -- a future edit, an exception on the wrong branch, or a hand-run UPDATE during an incident.
+      --
+      -- DEFERRED, and it has to be: the handler nulls \`subject_keys.subject_key\` and clears the
+      -- sessions in one transaction, and an immediate trigger would fire between the two and
+      -- refuse a write that is in the middle of being correct. Checked at commit, the question is
+      -- "did this transaction, as a whole, finish the erasure" — which is the only version of the
+      -- question worth asking. Same mechanism, and the same reason, as
+      -- \`community_assert_spend_names_entry\` and \`ledger/src/migrations.ts:324\`.
+      --
+      -- It reads OLD.subject_key because NEW's is already null — the pseudonym being retired is
+      -- the only handle on the rows that have to be checked.
+      -- ════════════════════════════════════════════════════════════════════════════════════════
+      create or replace function analytics_assert_erasure_unlinked() returns trigger as $$
+      declare
+        leaked bigint;
+      begin
+        if new.erased_at is null or old.subject_key is null then
+          return null;
+        end if;
+        select count(*) into leaked
+          from events where subject_key = old.subject_key and session is not null;
+        if leaked > 0 then
+          raise exception
+            'erasure left a session identifier on % event row(s); the subject is still linkable', leaked
+            using errcode = 'check_violation';
+        end if;
+        return null;
+      end;
+      $$ language plpgsql;
+
+      drop trigger if exists analytics_erasure_unlinked on subject_keys;
+      create constraint trigger analytics_erasure_unlinked
+        after update on subject_keys
+        deferrable initially deferred
+        for each row execute function analytics_assert_erasure_unlinked();
+    `,
+  },
 ]
 
 /** Every table this service owns. The truncate list for the test harness, and nothing else. */

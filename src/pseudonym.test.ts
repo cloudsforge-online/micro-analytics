@@ -25,12 +25,14 @@ import {
   deriveSubject,
   digestsEqual,
   eraseSubject,
+  hmacHex,
   isAttributable,
   lookupKeyFor,
   newSalt,
   pruneSubjects,
   rawSubject,
   subjectKeyFor,
+  type RawSubject,
 } from './pseudonym.ts'
 import { TEST_PEPPER, migrateTestDb, openDb, resetAnalytics, skip } from './testsupport.ts'
 
@@ -172,7 +174,7 @@ describe('pseudonym', { skip }, () => {
     it('destroys the salt and the pseudonym, and keeps the tombstone', async () => {
       await plant(SPIROS)
       const outcome = await eraseSubject(sql, TEST_PEPPER, SPIROS, new Date())
-      assert.deepEqual(outcome, { erased: true, alreadyErased: false })
+      assert.deepEqual(outcome, { erased: true, alreadyErased: false, sessionsCleared: 0 })
 
       const rows = await sql<{ subject_key: string | null; salt: string | null; erased_at: Date | null }[]>`
         select subject_key, salt, erased_at from subject_keys where lookup_key = ${lookupKeyFor(TEST_PEPPER, SPIROS)}
@@ -262,8 +264,8 @@ describe('pseudonym', { skip }, () => {
       await plant(SPIROS)
       const first = await eraseSubject(sql, TEST_PEPPER, SPIROS, new Date())
       const second = await eraseSubject(sql, TEST_PEPPER, SPIROS, new Date())
-      assert.deepEqual(first, { erased: true, alreadyErased: false })
-      assert.deepEqual(second, { erased: true, alreadyErased: true })
+      assert.deepEqual(first, { erased: true, alreadyErased: false, sessionsCleared: 0 })
+      assert.deepEqual(second, { erased: true, alreadyErased: true, sessionsCleared: 0 })
     })
 
     /*
@@ -291,8 +293,8 @@ describe('pseudonym', { skip }, () => {
       const sameInstant = new Date()
       const first = await eraseSubject(sql, TEST_PEPPER, SPIROS, sameInstant)
       const second = await eraseSubject(sql, TEST_PEPPER, SPIROS, sameInstant)
-      assert.deepEqual(first, { erased: true, alreadyErased: false })
-      assert.deepEqual(second, { erased: true, alreadyErased: true }, 'the clock is not the record')
+      assert.deepEqual(first, { erased: true, alreadyErased: false, sessionsCleared: 0 })
+      assert.deepEqual(second, { erased: true, alreadyErased: true, sessionsCleared: 0 }, 'the clock is not the record')
     })
 
     it('acknowledges an erasure for somebody this service never saw', async () => {
@@ -300,7 +302,7 @@ describe('pseudonym', { skip }, () => {
       // (10-migration-strategy.md:507-515). "We have nothing" is an acknowledgement, and the
       // tombstone is what keeps it true if an event turns up afterwards.
       const outcome = await eraseSubject(sql, TEST_PEPPER, SPIROS, new Date())
-      assert.deepEqual(outcome, { erased: true, alreadyErased: false })
+      assert.deepEqual(outcome, { erased: true, alreadyErased: false, sessionsCleared: 0 })
       assert.equal((await deriveSubject(sql, TEST_PEPPER, SPIROS, AT)).status, 'erased')
     })
 
@@ -309,6 +311,87 @@ describe('pseudonym', { skip }, () => {
       await eraseSubject(sql, TEST_PEPPER, SPIROS, new Date())
       const rows = await sql<{ n: string }[]>`select count(*) as n from events where subject_key = ${key}`
       assert.equal(Number(rows[0]?.n), 1, '13-operational-model.md:637 — February must not change in March')
+    })
+
+    /*
+     * ═══════════════════════════════════════════════════════════════════════════════════════
+     * THE SECOND IDENTIFIER, WHICH DESTROYING THE SALT DOES NOTHING ABOUT.
+     *
+     * `events.session` is HMAC(pepper, 'cf.analytics.session.v1|' || sessionId). No per-subject
+     * salt goes into it, so it survived erasure intact and stayed recomputable under a pepper
+     * that can never be destroyed — anyone holding it and a candidate session id could select an
+     * "erased" person's rows, and even without it the rows re-cluster by session into one
+     * person's history. That is a link, and Recital 26 asks exactly whether one remains.
+     * ═══════════════════════════════════════════════════════════════════════════════════════
+     */
+    const plantWithSession = async (subject: RawSubject, session: string): Promise<string> => {
+      const derived = await deriveSubject(sql, TEST_PEPPER, subject, AT)
+      assert.equal(derived.status, 'ok')
+      const key = derived.status === 'ok' ? derived.subjectKey : ''
+      await sql`
+        insert into events (subject_key, subject_kind, event_name, occurred_at, session, source_event_id, source_topic, producer)
+        values (${key}, 'user', 'deposit_confirmed', ${AT}, ${session}, ${crypto.randomUUID()}, 'wallet.deposit.confirmed', 'wallet')
+      `
+      return key
+    }
+
+    it('destroys the session identifier, which the salt argument never covered', async () => {
+      const session = hmacHex(TEST_PEPPER, 'cf.analytics.session.v1|browser-session-42')
+      const key = await plantWithSession(SPIROS, session)
+
+      // The link exists before erasure, and it is recomputable from the session id alone.
+      const [before] = await sql<{ n: string }[]>`
+        select count(*) as n from events where session = ${session}`
+      assert.equal(Number(before?.n), 1)
+
+      const outcome = await eraseSubject(sql, TEST_PEPPER, SPIROS, new Date())
+      assert.equal(outcome.sessionsCleared, 1, 'the session survived erasure')
+
+      const [after] = await sql<{ n: string }[]>`
+        select count(*) as n from events where session = ${session}`
+      assert.equal(Number(after?.n), 0, 'the erased subject is still selectable by session id')
+
+      // The row itself is still there and still counts towards every aggregate — only the link
+      // went. This is the whole difference between erasure here and deleting history.
+      const [kept] = await sql<{ n: string }[]>`
+        select count(*) as n from events where subject_key = ${key}`
+      assert.equal(Number(kept?.n), 1)
+    })
+
+    it('refuses to commit an erasure that leaves a session behind', async () => {
+      // The handler clears the sessions itself. This is the invariant underneath it — migration
+      // 8's deferred constraint trigger — so a future edit cannot quietly half-do the erasure.
+      const session = hmacHex(TEST_PEPPER, 'cf.analytics.session.v1|browser-session-43')
+      await plantWithSession(SPIROS, session)
+      const lookupKey = lookupKeyFor(TEST_PEPPER, SPIROS)
+
+      await assert.rejects(
+        () =>
+          sql.begin(async (tx) => {
+            // Exactly what `eraseSubject` does, MINUS the session clear.
+            await tx`
+              update subject_keys
+                 set subject_key = null, salt = null, erased_at = now()
+               where lookup_key = ${lookupKey}
+            `
+          }),
+        /session identifier/,
+        'a half-done erasure committed, leaving the subject linkable',
+      )
+    })
+
+    it('still refuses an update to events that is not an erasure', async () => {
+      // Append-only is relaxed for exactly one write and no other: session, to NULL, nothing else.
+      const key = await plant(SPIROS)
+      await assert.rejects(
+        () => sql`update events set event_name = 'page_viewed' where subject_key = ${key}`,
+        /append-only/,
+      )
+      await assert.rejects(
+        () => sql`update events set session = ${'a'.repeat(64)} where subject_key = ${key}`,
+        /append-only/,
+        'a row could be re-keyed to a new session under the guise of erasure',
+      )
     })
   })
 
