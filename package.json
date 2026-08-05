@@ -1,6 +1,6 @@
 {
   "name": "@cloudsforge/analytics",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "The product analytics plane. A pseudonymised, append-only product event store fed by the event bus — never by a third-party page tag (AD-21). The pseudonym is a peppered, per-subject-salted HMAC derived at the ingest boundary, and the schema REFUSES a raw subject; erasure destroys the salt, which makes a person's events unattributable to anyone, including us. Event properties are allowlisted by name and by type, so no free text a user typed can reach a property. Funnels, cohorts and retention are suppressed below a minimum cohort, because an aggregate over few people is a disclosure.",
   "license": "MIT",
@@ -34,6 +34,7 @@
     "@cloudsforge/db": "link:../runtime/packages/db",
     "@cloudsforge/jobs": "link:../runtime/packages/jobs",
     "@cloudsforge/lifecycle": "link:../runtime/packages/lifecycle",
+    "@cloudsforge/secrets": "link:../runtime/packages/secrets",
     "@cloudsforge/telemetry": "link:../runtime/packages/telemetry",
     "postgres": "^3.4.5",
     "tsx": "^4.19.2"

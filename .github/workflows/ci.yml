@@ -35,15 +35,28 @@ jobs:
       # configuration at import — so the container needs the variables it declares, not just a
       # database, or it exits before it serves /livez.
       #
-      # These are CI-only NON-SECRETS. The pepper below is a throwaway that exists only to clear a
-      # 32-character length check on a container that will be killed thirty seconds later; it
-      # pseudonymises nothing, because no event is ever ingested during the smoke test. A REAL
-      # ANALYTICS_PSEUDONYM_KEY must never appear in a workflow file, an image layer, or anywhere
-      # a repository read grants access to — see the README on where it does live.
+      # These are CI-only NON-SECRETS, and all three are now `@generate`: service-ci.yml replaces
+      # that marker with a fresh `openssl rand -base64 48` per run and throws it away afterwards.
+      #
+      # They used to be `ci-only-not-a-real-pepper-…`, `ci-only-not-a-real-token-…` and
+      # `ci-only-not-a-real-delivery-secret-…`, and this comment described the pepper as "a
+      # throwaway that exists only to clear a 32-character length check". That is the defect stated
+      # out loud in configuration — the estate shipped a 40-character `estate-only-…` pepper past
+      # that same floor — and it is exactly what @cloudsforge/secrets refuses: `ci-only` and
+      # `not-a-real` are both placeholder markers, and the guard has no CI exemption on purpose
+      # (micro-org #142), because an escape hatch is reached for in the same hurry that produced the
+      # defect. CI does not need a WEAK secret, it needs A secret — nothing is ingested during the
+      # smoke test, so the pepper pseudonymises nothing either way — and generating one per run is
+      # honest in a way the literal never was.
+      #
+      # Generated HERE rather than committed as a high-entropy literal, so no repository ever holds
+      # a string that looks like a key. A REAL ANALYTICS_PSEUDONYM_KEY must never appear in a
+      # workflow file, an image layer, or anywhere a repository read grants access to — see the
+      # README on where it does live.
       smoke-env: |
-        ANALYTICS_PSEUDONYM_KEY=ci-only-not-a-real-pepper-000000000000
-        ANALYTICS_TOKEN=ci-only-not-a-real-token-0000000000000
-        ANALYTICS_DELIVERY_SECRETS=ci-only-not-a-real-delivery-secret-0000
+        ANALYTICS_PSEUDONYM_KEY=@generate
+        ANALYTICS_TOKEN=@generate
+        ANALYTICS_DELIVERY_SECRETS=@generate
         IDENTITY_JWKS_URL=http://127.0.0.1:4001/.well-known/jwks.json
         IDENTITY_ISSUER=http://127.0.0.1:4001
     secrets:

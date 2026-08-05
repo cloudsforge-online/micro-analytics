@@ -16,11 +16,18 @@
  * 16-risks-and-open-decisions.md:75 is exactly this risk and names it as the reason the boundary is
  * enforced in code.
  *
- * So there is no default, no development fallback, and no "unset means off" mode. Sixteen bytes of
- * entropy is the floor and the check is on length, which is the only proxy available here. It is
- * deliberately above the point at which a human-chosen string is plausible, so a memorable password
- * fails it too. A service that started with a weak or absent pepper would produce a store that
- * looks pseudonymised and is not, which is worse than one that refuses to start.
+ * So there is no default, no development fallback, and no "unset means off" mode. A service that
+ * started with a weak or absent pepper would produce a store that looks pseudonymised and is not,
+ * which is worse than one that refuses to start.
+ *
+ * **THE CHECK IS NO LONGER ON LENGTH, AND THAT SENTENCE USED TO BE THIS FILE'S BIGGEST LIE.** It
+ * said "the check is on length, which is the only proxy available here" and asked for 32
+ * characters. Measured out of `cloudsforge-estate-analytics-1` on 2026-08-05, the pepper this
+ * estate is running is 40 characters, hyphenated, and normalises to a string containing
+ * `estateonly` — micro-org #142 and #189 in the same value, on the one variable this header calls
+ * the most consequential in the estate, and the 32-character floor passed it without a word.
+ * `@cloudsforge/secrets` asserts the SHAPE instead: base64 or hex, 32 decoded BYTES rather than 32
+ * keystrokes, a measured entropy floor, and no placeholder marker anywhere in the value.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * The minimum-cohort threshold has a FLOOR rather than a range. The deploy may raise it; it may
@@ -38,6 +45,12 @@
  */
 
 import { hostname } from 'node:os'
+import {
+  SecretError,
+  assertGeneratedSecret,
+  assertOpaqueSecret,
+  parseSecretList as parseSharedSecretList,
+} from '@cloudsforge/secrets'
 
 /**
  * The service's own name. A constant rather than a variable: it is a property of the repository,
@@ -62,18 +75,29 @@ export class EnvError extends Error {
   }
 }
 
-const PLACEHOLDERS = new Set([
-  'changeme',
-  'change-me',
-  'change_me',
-  'placeholder',
-  'secret',
-  'token',
-  'pepper',
-  'dev-secret',
-  'replace-with-a-real-secret',
-  'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-])
+/**
+ * THE `PLACEHOLDERS` SET THAT USED TO BE HERE IS GONE, AND ITS ABSENCE IS THE FIX.
+ *
+ * It held ten exact strings and was paired with a length floor — 24 characters for the token, 32
+ * for the pepper. Neither could fail for either of the two values this estate is actually running.
+ * Measured out of `cloudsforge-estate-analytics-1` on 2026-08-05:
+ *
+ *   ANALYTICS_TOKEN          41 characters, hyphenated, normalises to contain `placeholder`
+ *   ANALYTICS_PSEUDONYM_KEY  40 characters, hyphenated, normalises to contain `estateonly`
+ *
+ * The token's compose line is `${ANALYTICS_TOKEN:-estate-placeholder-token-0000000000000000}`, so a
+ * deploy CAN override it and has not, on either estate, on two lines each. The pepper arrives from
+ * `secrets/analytics-pepper.<network>.env` and is the value #189 exists about.
+ *
+ * A check that cannot fail is worse than no check, because the absence of an alarm gets read as the
+ * absence of a problem. Both floors were long enough to look like diligence and short enough to
+ * pass every placeholder anybody wrote — 41 > 24 and 40 > 32.
+ *
+ * A deny-list of exact strings is structurally unable to work: the next placeholder somebody writes
+ * is, by definition, not on it. `@cloudsforge/secrets` asserts the SHAPE of the value instead,
+ * which is the property a placeholder cannot have. It is imported rather than copied so that this
+ * service cannot drift from the other sixteen.
+ */
 
 type Source = Readonly<Record<string, string | undefined>>
 
@@ -83,16 +107,70 @@ function required(source: Source, name: string): string {
   return value
 }
 
-function requiredSecret(source: Source, name: string, minLength = 24): string {
+/**
+ * Re-wrap the shared guard's `SecretError` as this service's `EnvError`.
+ *
+ * `loadEnv` documents a single error class for every configuration failure, and the boot path
+ * catches that one class. The message is preserved verbatim — it already names the variable and the
+ * command that fixes it, and it never contains the value.
+ */
+function asEnvError<T>(run: () => T): T {
+  try {
+    return run()
+  } catch (err) {
+    if (err instanceof SecretError) throw new EnvError(err.message)
+    throw err
+  }
+}
+
+/**
+ * A key THIS ESTATE GENERATES, held to the strictest of the three rules.
+ *
+ * Used for the peppers, and correctly: `runbooks/runbook-analytics-pseudonym-key.md:68` tells an
+ * operator to mint one with `openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | cut -c1-48`, which is
+ * 48 characters of the base64 alphabet carrying 36 bytes. The estate chose that command, so the
+ * estate may demand its alphabet — that argument does not transfer to a value somebody else issues,
+ * which is why `ANALYTICS_TOKEN` below takes the opaque rule instead.
+ *
+ * `assertGeneratedSecret` asserts what a placeholder cannot have: base64 or hex (no hyphens — every
+ * placeholder this estate wrote had one), 32 decoded BYTES rather than 32 keystrokes, and a
+ * measured Shannon entropy floor. The old `minLength = 32` parameter is gone rather than kept in
+ * front of it: it is a strict subset of the shape check, and running it first answers a
+ * 40-character placeholder with "must be at least 32 characters" — true, useless, and about the
+ * wrong property.
+ *
+ * **CONSEQUENCE, STATED PLAINLY, BECAUSE IT IS THE MOST EXPENSIVE ONE IN THIS CHANGE: the pepper
+ * this estate is running is refused, so analytics will not boot until a real one is set — and the
+ * placeholder CANNOT BE KEPT IN THE RING as `_V1` to preserve pre-rotation lookups, because the
+ * guard refuses it under any version number.** That is the right answer even though it costs
+ * something real. A pepper that was published in a compose file pseudonymises nothing: its lookup
+ * keys are computable by anyone who can read the repository, so the rows derived under it were
+ * never protected, and keeping it alive would buy erasure-reachability for data that has no privacy
+ * property to protect. Retention prunes those rows; `subjectsBelowVersion` says when.
+ */
+function requiredGeneratedSecret(source: Source, name: string): string {
   const value = required(source, name)
-  if (PLACEHOLDERS.has(value.toLowerCase()) || value.toLowerCase().startsWith('change_me')) {
-    throw new EnvError(`${name} is set to a known placeholder — generate a real secret`)
-  }
-  // Length is a proxy for entropy and the only one available here. It is set above the point at
-  // which a human-chosen string is plausible, so a memorable password fails this check too.
-  if (value.length < minLength) {
-    throw new EnvError(`${name} must be at least ${minLength} characters (got ${value.length})`)
-  }
+  asEnvError(() => assertGeneratedSecret(name, value))
+  return value
+}
+
+/**
+ * A secret whose ALPHABET THIS ESTATE DOES NOT CONTROL.
+ *
+ * `ANALYTICS_TOKEN` is not minted by anything. The compose file's own note on the service-token
+ * grants says it in passing and exactly: "`ledger` and `analytics` lost their entries entirely.
+ * Neither makes a tokened outbound call; `ANALYTICS_TOKEN` is an inbound `/metrics` secret." It is
+ * a static shared value written into a compose file and into Prometheus's `http_headers` block by
+ * an operator — the case `@cloudsforge/secrets` documents `assertOpaqueSecret` for by name.
+ *
+ * The two rules differ on the alphabet and agree on everything that matters here: both refuse a
+ * placeholder MARKER anywhere in the normalised value, so `estate-placeholder-token-0000000000000000`
+ * is refused by either. The choice buys an operator a hand-set value that works; it does not buy the
+ * defect a way through.
+ */
+function requiredOpaqueSecret(source: Source, name: string): string {
+  const value = required(source, name)
+  asEnvError(() => assertOpaqueSecret(name, value))
   return value
 }
 
@@ -113,8 +191,10 @@ const LEGACY_PEPPER = 'ANALYTICS_PSEUDONYM_KEY'
  * If shipping #189's fix required renaming the variable, the fix would itself orphan every existing
  * pseudonym, which is the exact damage it exists to prevent.
  *
- * 32 rather than the estate's usual 24: this is the value whose disclosure retroactively undoes the
- * privacy property of four hundred days of data; it is worth eight more characters.
+ * Every version faces the FULL rule, including one being rotated out. "Just until retention catches
+ * up" is exactly how a placeholder survives the rotation that was meant to remove it — and here the
+ * outgoing pepper is the one whose disclosure retroactively undoes the privacy property of four
+ * hundred days of data, so it is the last entry that should get a relaxed check.
  */
 function parsePseudonymKeys(source: Source): {
   pseudonymKeys: ReadonlyMap<number, string>
@@ -129,7 +209,7 @@ function parsePseudonymKeys(source: Source): {
     const version = Number(suffix)
     if (version < 1) throw new EnvError(`${name}: pepper versions start at 1`)
     if (!source[name]?.trim()) continue
-    peppers.set(version, requiredSecret(source, name, 32))
+    peppers.set(version, requiredGeneratedSecret(source, name))
   }
 
   const legacy = source[LEGACY_PEPPER]?.trim()
@@ -140,7 +220,7 @@ function parsePseudonymKeys(source: Source): {
         `${LEGACY_PEPPER} and ${PEPPER_PREFIX}1 are both set and differ — keep ${PEPPER_PREFIX}1 and remove the unsuffixed one`,
       )
     }
-    if (explicit === undefined) peppers.set(1, requiredSecret(source, LEGACY_PEPPER, 32))
+    if (explicit === undefined) peppers.set(1, requiredGeneratedSecret(source, LEGACY_PEPPER))
   }
 
   if (peppers.size === 0) {
@@ -184,26 +264,29 @@ function integer(source: Source, name: string, fallback: number, min: number, ma
  * publishes a new secret, accepts both for a window, then drops the old one. One value here would
  * make every rotation an estate-wide synchronised deploy.
  */
-export function parseSecrets(raw: string, name: string, minLength = 24): readonly string[] {
-  const secrets = raw
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-  if (secrets.length === 0) throw new EnvError(`${name} is required — ${SERVICE} refuses to start without it`)
-  for (const secret of secrets) {
-    if (PLACEHOLDERS.has(secret.toLowerCase()) || secret.toLowerCase().startsWith('change_me')) {
-      throw new EnvError(`${name} contains a known placeholder — generate a real secret`)
-    }
-    if (secret.length < minLength) {
-      throw new EnvError(`${name} entries must each be at least ${minLength} characters`)
-    }
-  }
-  if (new Set(secrets).size !== secrets.length) {
-    // Two identical secrets is a rotation that did not rotate, and it would make `keyIndex > 0`
-    // — the signal that an old key is still in use — report the wrong thing.
-    throw new EnvError(`${name} lists the same secret twice`)
-  }
-  return Object.freeze(secrets)
+export function parseSecrets(raw: string, name: string): readonly string[] {
+  // The `minLength = 24` parameter this used to take is GONE. It was the keystroke floor
+  // `@cloudsforge/secrets` exists to replace: `estate-placeholder-token-0000000000000000` is 41
+  // characters and cleared it, as would every other placeholder this estate has written. Removing
+  // the parameter rather than defaulting it differently is deliberate — a caller cannot ask for a
+  // weaker rule if there is no argument that expresses one.
+  //
+  // Argument order is flipped on the way through: this service's exported signature is
+  // `(raw, name)` and the shared one is `(name, raw)`. Kept rather than changed because the
+  // signature is this module's public surface, and a silent flip of two `string` parameters is a
+  // change the type checker cannot catch.
+  //
+  // EVERY ENTRY FACES THE FULL RULE, INCLUDING THE OUTGOING ONE. In a rotation overlap window the
+  // outgoing key is the one an attacker already holds if it leaked, and "just for the drain" is
+  // exactly how a placeholder survives the rotation that was meant to remove it. The duplicate
+  // check comes across too: two identical secrets is a rotation that did not rotate, and it would
+  // make `keyIndex > 0` — the signal that an old key is still in use — report the wrong thing.
+  //
+  // These are GENERATED keys, not opaque ones: measured live on 2026-08-05,
+  // `ANALYTICS_DELIVERY_SECRETS` holds 64 characters of the base64/hex alphabet carrying 48 bytes,
+  // which is `openssl rand -base64 48` exactly. It is the one secret this service reads that the
+  // estate already mints correctly, and it PASSES.
+  return asEnvError(() => parseSharedSecretList(name, raw))
 }
 
 export interface Env {
@@ -310,7 +393,7 @@ export function loadEnv(source: Source = process.env, host = ''): Env {
     instanceId: optional(source, 'INSTANCE_ID', host || 'unknown'),
 
     ...parsePseudonymKeys(source),
-    token: requiredSecret(source, 'ANALYTICS_TOKEN'),
+    token: requiredOpaqueSecret(source, 'ANALYTICS_TOKEN'),
     deliverySecrets: parseSecrets(required(source, 'ANALYTICS_DELIVERY_SECRETS'), 'ANALYTICS_DELIVERY_SECRETS'),
 
     minCohort,

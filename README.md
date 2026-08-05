@@ -67,11 +67,13 @@ memory, and in **the deploy's secret store**. Nowhere else:
 - **never returned by a route**, and **never baked into an image layer** — there is no `ENV` line in
   the Dockerfile, and `.dockerignore` excludes `.env`, `.env.*` and `.git`.
 
-It is required, has no default and no development fallback, and must be at least 32 characters —
-eight more than the estate's usual 24, because this is the value whose disclosure retroactively
-undoes the privacy property of four hundred days of data. A service that started with a weak or
-absent pepper would produce a store that *looks* pseudonymised and is not, which is worse than one
-that refuses to start.
+It is required, has no default and no development fallback, and its SHAPE is asserted at boot by
+`@cloudsforge/secrets`: the base64 or hex alphabet, at least 32 decoded **bytes**, a measured
+Shannon entropy floor, and no placeholder marker anywhere in the normalised value. It is emphatically
+**not** a character-count check any more — the floor that used to stand here asked for 32 characters
+and the pepper this estate has been running is 40 characters of hyphenated `estate-only-...`
+(micro-org #142/#189). A service that started with a weak or absent pepper would produce a store
+that *looks* pseudonymised and is not, which is worse than one that refuses to start.
 
 An attacker with a connection to this database therefore has, per subject: one HMAC under an
 unknown key, one unrelated HMAC under the same unknown key, and thirty-two random bytes. There is
