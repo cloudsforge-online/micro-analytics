@@ -227,7 +227,7 @@ describe('the HTTP surface', { skip }, () => {
 
     it('an ordinary user may NOT, whatever they carry', async () => {
       // There is no per-user view of this data and there is not going to be one: a per-user view is
-      // the support question AD-21 exists to make unanswerable (13-operational-model.md:603-608).
+      // the support question AD-21 exists to make unanswerable (13-operational-model.md).
       const res = await get('/reports/active', 'person')
       assert.equal(res.status, 403)
     })
@@ -348,7 +348,7 @@ describe('the HTTP surface', { skip }, () => {
     //
     // Every test below used to pass `token: 'ingester'`, so the suite only ever exercised a caller
     // that does not exist. No outbox relay in this estate sends an `Authorization` header — all
-    // twenty-one were read, `identity/src/outbox.ts:320` among them — so the shape exercised here
+    // twenty-one were read, `identity/src/outbox.ts` among them — so the shape exercised here
     // is now the shape actually on the wire: signature, event id, nothing else.
     // ══════════════════════════════════════════════════════════════════════════════════════════
 

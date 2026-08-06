@@ -5,8 +5,8 @@
  * **WHY A PLAIN HMAC(user_id, pepper) IS NOT PSEUDONYMISATION, AND WHAT IS HERE INSTEAD.**
  *
  * The estate specifies `subject_key = HMAC(user_id, analytics_pepper)` in four places
- * (02-target-architecture.md:596-597, 11-data-and-contract-strategy.md:509-510,
- * 13-operational-model.md:596-597, 10-migration-strategy.md:509). Taken literally it has a defect
+ * (02-target-architecture.md, 11-data-and-contract-strategy.md,
+ * 13-operational-model.md, 10-migration-strategy.md). Taken literally it has a defect
  * that is fatal to the only privacy promise this service makes, and the defect is *erasure*:
  *
  *     subject_key = HMAC(pepper, user_id)   is a PURE FUNCTION of two things that both survive.
@@ -14,7 +14,7 @@
  * Erasure of such a key is impossible by construction. Delete every row you like — anyone holding
  * the pepper and a candidate user id recomputes the key and finds that person's entire behavioural
  * history, for the four hundred days it is retained. That is not a pseudonym that can be erased,
- * it is an index into a person, and 10-migration-strategy.md:492 ("Pseudonymised events —
+ * it is an index into a person, and 10-migration-strategy.md ("Pseudonymised events —
  * `analytics` — Deleted by `subject_key`") assumes an erasure this construction cannot deliver.
  *
  * So the pseudonym here is salted per subject, and the salt is the only thing that can be
@@ -30,7 +30,7 @@
  * **Erasure destroys the salt.** After it, `subject_key` is unreachable from `subject` — not
  * "hard", unreachable: recomputing it requires 2^256 guesses at a value that no longer exists
  * anywhere. The rows keep their pseudonym and become anonymous data about nobody, which is exactly
- * what 11-data-and-contract-strategy.md:468 already claims of this service ("Nothing to do — it
+ * what 11-data-and-contract-strategy.md already claims of this service ("Nothing to do — it
  * never held a `user_id`") and what the plain construction could not have made true.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
@@ -40,17 +40,17 @@
  * process memory, and **never written to this service's database**. That separation is the second
  * half of the design: an attacker holding a database connection has, for every subject, two
  * unrelated 256-bit values and a random salt, and no way to test a guess at who any of them is.
- * 13-operational-model.md:597 requires it to be absent from any backup that also contains the
+ * 13-operational-model.md requires it to be absent from any backup that also contains the
  * identity database; keeping it out of this database is the strongest form of that available to
  * a service that owns exactly one database.
  *
  * ## An inherited claim that does not survive contact with the shipped contract
  *
- * 03-repository-responsibilities.md:204 says `analytics` "must never RECEIVE a `user_id`". Against
+ * 03-repository-responsibilities.md says `analytics` "must never RECEIVE a `user_id`". Against
  * the envelope that actually ships it is not implementable: `EventEnvelope.actor` is
- * `user:<user_id>` (`contracts/packages/events/src/index.ts:61,418`) and `key` is `user_id` on
+ * `user:<user_id>` (`contracts/packages/events/src/index.ts,418`) and `key` is `user_id` on
  * eleven of the eighteen registered topics (`:234,242,249,256,318,325` and others), so every
- * delivery this service is entitled to read carries one. 10-migration-strategy.md:509 says the
+ * delivery this service is entitled to read carries one. 10-migration-strategy.md says the
  * opposite of :204 outright — that analytics "cannot compute the key itself" and must be *sent*
  * one — which would put the pepper in identity, and in every other producer, contradicting the
  * three documents that say it "lives only in the analytics service".
@@ -383,7 +383,7 @@ interface SubjectRow {
  *
  * The events keep their now-orphaned pseudonym. They are not deleted, for two reasons that agree:
  * after the salt is gone they identify nobody, and deleting them would retroactively rewrite every
- * historical funnel and cohort number — which 13-operational-model.md:637 forbids in the strongest
+ * historical funnel and cohort number — which 13-operational-model.md forbids in the strongest
  * terms it uses anywhere ("a retention number that changed definition in March is a chart that
  * lies about February").
  *

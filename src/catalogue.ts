@@ -16,7 +16,7 @@
  * separate failures at once. It is a re-identification vector — "the user whose listing is called
  * *Spiros's 1994 Corolla*" is one person, whatever the subject column says — and it is a GDPR
  * erasure problem, because erasing the subject mapping does not erase a name written into a
- * property. 11-data-and-contract-strategy.md:509-515 requires the ingest path to REJECT such a
+ * property. 11-data-and-contract-strategy.md requires the ingest path to REJECT such a
  * key "rather than dropping the key silently"; a producer that sends one is told, in the response
  * to its own signed delivery, exactly which properties were refused.
  *
@@ -28,9 +28,9 @@
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * Money is a special case, stated twice in the estate and enforced here: amounts arrive
- * **bucketed** (`amount_bucket`), never exact. 13-operational-model.md:598-600 fixes the buckets
+ * **bucketed** (`amount_bucket`), never exact. 13-operational-model.md fixes the buckets
  * at `<10, 10–100, 100–1k, 1k–10k, >10k` USD-equivalent, and 11:512 forbids an `amount` column
- * outright. Actual revenue comes from the ledger — 13-operational-model.md:630 — never from here.
+ * outright. Actual revenue comes from the ledger — 13-operational-model.md — never from here.
  */
 
 /* ------------------------------------------------------------------ property types */
@@ -84,7 +84,7 @@ export const VALUE_PATTERN = '^[a-z0-9][a-z0-9_.:/-]{0,31}$'
 export const MAX_PROPERTIES = 12
 
 /**
- * The amount buckets, exactly as 13-operational-model.md:598-600 states them.
+ * The amount buckets, exactly as 13-operational-model.md states them.
  *
  * USD-equivalent at event time, computed by the producer. This service never sees the number it
  * came from and could not reconstruct it: `100_1k` is nine hundred dollars wide.
@@ -284,9 +284,9 @@ export interface EventSpec {
   /**
    * False when the topic is not in this build's `@cloudsforge/contracts-events` registry.
    *
-   * Four of them are: AD-21 requires the three explicit UI events, and 13-operational-model.md:590
+   * Four of them are: AD-21 requires the three explicit UI events, and 13-operational-model.md
    * says frontends emit them "through the same envelope". `contracts-events` registers no topic
-   * for any of them (`contracts/packages/events/src/index.ts:222-349` — eighteen topics, all
+   * for any of them (`contracts/packages/events/src/index.ts` — eighteen topics, all
    * server-side), so they are forward-declared here rather than dropped. Reported, not fixed: this
    * repository does not edit a sibling's contract package.
    */
@@ -336,7 +336,7 @@ export const EVENTS: Readonly<Record<string, EventSpec>> = Object.freeze({
  * It is not an analytics event and it must never become a row: a row saying "this pseudonym was
  * erased" is a record about the person who asked to be forgotten. It is handled by `ingest.ts`,
  * which destroys the subject's salt, and the inbox row is the acknowledgement — the same shape
- * `activity/src/ingest.ts:186-189` uses, for the same reason.
+ * `activity/src/ingest.ts` uses, for the same reason.
  */
 export const ERASURE_TOPIC = 'identity.user.deleted'
 

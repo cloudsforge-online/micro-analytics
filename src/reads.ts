@@ -86,7 +86,7 @@ export interface Window {
  * against cannot drift apart.
  *
  * The type is `() => Date` rather than `() => number` to match the estate's prevailing seam —
- * `notify/src/pipeline.ts:83`, `runtime/packages/jobs/src/index.ts:121`, `foresight/src/jobs.ts:98`
+ * `notify/src/pipeline.ts`, `runtime/packages/jobs/src/index.ts`, `foresight/src/jobs.ts`
  * — and because every use of it here crosses into SQL as a `timestamptz` parameter.
  */
 export type Now = () => Date
@@ -139,7 +139,7 @@ export async function dailySeries(
 /**
  * Distinct subjects with at least one **non-authentication** event in the window.
  *
- * 13-operational-model.md:611 defines "active" in exactly those words, and the exclusion is the
+ * 13-operational-model.md defines "active" in exactly those words, and the exclusion is the
  * whole substance of the definition: a user whose only activity is signing in and leaving is not
  * an active user, and counting them makes every engagement number look better than it is.
  */

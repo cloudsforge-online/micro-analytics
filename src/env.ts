@@ -13,7 +13,7 @@
  * pseudonymisation ever real". With the pepper and a candidate user id, an attacker can compute a
  * lookup key and learn whether that person is in the store — and, while their salt still exists,
  * recover their entire four-hundred-day behavioural history. R-37 in
- * 16-risks-and-open-decisions.md:75 is exactly this risk and names it as the reason the boundary is
+ * 16-risks-and-open-decisions.md is exactly this risk and names it as the reason the boundary is
  * enforced in code.
  *
  * So there is no default, no development fallback, and no "unset means off" mode. A service that
@@ -126,7 +126,7 @@ function asEnvError<T>(run: () => T): T {
 /**
  * A key THIS ESTATE GENERATES, held to the strictest of the three rules.
  *
- * Used for the peppers, and correctly: `runbooks/runbook-analytics-pseudonym-key.md:68` tells an
+ * Used for the peppers, and correctly: `runbooks/runbook-analytics-pseudonym-key.md` tells an
  * operator to mint one with `openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | cut -c1-48`, which is
  * 48 characters of the base64 alphabet carrying 36 bytes. The estate chose that command, so the
  * estate may demand its alphabet — that argument does not transfer to a value somebody else issues,
@@ -260,7 +260,7 @@ function integer(source: Source, name: string, fallback: number, min: number, ma
  * The delivery-signature secrets, newest first.
  *
  * A LIST rather than one value, because `verifyDelivery` takes a list so that a rotation is a
- * window rather than an instant (`contracts/packages/events/src/index.ts:718-721`). An endpoint
+ * window rather than an instant (`contracts/packages/events/src/index.ts`). An endpoint
  * publishes a new secret, accepts both for a window, then drops the old one. One value here would
  * make every rotation an estate-wide synchronised deploy.
  */
@@ -341,7 +341,7 @@ export interface Env {
    */
   readonly minCohort: number
 
-  /** Product events. 400 days — 11-data-and-contract-strategy.md:434. */
+  /** Product events. 400 days — 11-data-and-contract-strategy.md. */
   readonly eventRetentionDays: number
   /** Daily rollups and the cohort grid. They outlive the events they were computed from. */
   readonly rollupRetentionDays: number

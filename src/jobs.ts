@@ -3,7 +3,7 @@
  *
  * Rule 8 of docs/ecosystem/03 §2: every background timer is a leased job. There is no `setInterval`
  * in this repository doing domain work, and CI greps for one
- * (`org/.github/workflows/service-ci.yml:443-463`).
+ * (`org/.github/workflows/service-ci.yml`).
  *
  * Each job is claimed `FOR UPDATE SKIP LOCKED` under a lease keyed `global`, so with N replicas
  * each tick runs exactly once. That matters more here than the rule alone suggests:
@@ -19,7 +19,7 @@
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  * **RETENTION IS A JOB THAT RUNS, NOT A DOCUMENTED INTENTION.**
  *
- * 11-data-and-contract-strategy.md:434 gives analytics events four hundred days, and a retention
+ * 11-data-and-contract-strategy.md gives analytics events four hundred days, and a retention
  * policy that lives only in a table in a document is a policy that has never deleted a row.
  * `jobs.test.ts` plants a row past the horizon, runs `sweepRetention`, and asserts the row is gone
  * — and asserts a row inside the horizon is still there, because a sweep that deletes everything
@@ -216,7 +216,7 @@ export async function sweepRetention(
      where received_at < ${at}::timestamptz - make_interval(days => ${retention.inboxDays})
   `)
   // A claim that produced an artefact is kept regardless of age — it is the only link between a
-  // caller's key and what it made. Same rule as market/src/idempotency.ts:198.
+  // caller's key and what it made. Same rule as market/src/idempotency.ts.
   const idempotency = await deleted(sql`
     delete from idempotency_keys
      where created_at < ${at}::timestamptz - make_interval(days => ${retention.idempotencyDays})
@@ -232,7 +232,7 @@ export async function sweepRetention(
  * Recompute the retention grid. Metric 18.
  *
  * A cohort is the ISO week of a subject's FIRST `user_registered`, and a subject is active in week
- * N if they emitted a non-authentication event in it — 13-operational-model.md:611 defines "active"
+ * N if they emitted a non-authentication event in it — 13-operational-model.md defines "active"
  * in exactly those words.
  *
  * The whole grid is rewritten inside one transaction rather than upserted cell by cell. A cohort

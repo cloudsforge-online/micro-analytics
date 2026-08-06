@@ -299,7 +299,7 @@ describe('pseudonym', { skip }, () => {
 
     it('acknowledges an erasure for somebody this service never saw', async () => {
       // The estate's erasure register waits on an acknowledgement from every subscriber
-      // (10-migration-strategy.md:507-515). "We have nothing" is an acknowledgement, and the
+      // (10-migration-strategy.md). "We have nothing" is an acknowledgement, and the
       // tombstone is what keeps it true if an event turns up afterwards.
       const outcome = await eraseSubject(sql, TEST_PEPPER, SPIROS, new Date())
       assert.deepEqual(outcome, { erased: true, alreadyErased: false, sessionsCleared: 0 })

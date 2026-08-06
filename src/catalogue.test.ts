@@ -92,7 +92,7 @@ describe('catalogue', () => {
     })
 
     it('no property is named after something the estate forbids', () => {
-      // 11-data-and-contract-strategy.md:512, applied to the property namespace as well as to
+      // 11-data-and-contract-strategy.md, applied to the property namespace as well as to
       // columns: the schema check would not see a jsonb key called `email`.
       for (const forbidden of ['user_id', 'email', 'handle', 'address', 'amount', 'name', 'title', 'ip']) {
         assert.ok(!PROPERTY_NAMES.includes(forbidden), `${forbidden} may not be an allowed property`)

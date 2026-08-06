@@ -44,7 +44,7 @@
  *
  * ## An unknown topic is refused, not quarantined — and that differs from `activity` on purpose
  *
- * `activity/src/ingest.ts:26-30` quarantines an unregistered topic **with its payload**, so it can
+ * `activity/src/ingest.ts` quarantines an unregistered topic **with its payload**, so it can
  * be reclassified later from data that was never thrown away. That is right for a narrative feed
  * and wrong here: an unclassified payload is an arbitrary producer-controlled object that never
  * passed the property allowlist, and keeping it would be exactly the hole the allowlist closes. So
@@ -255,7 +255,7 @@ export async function ingest(deps: IngestDeps, delivery: ParsedDelivery): Promis
       // This read `subjectOf(envelope)`, and `subjectOf` returns `envelope.actor`. On every other
       // topic that is right — the actor is the person the event is about. On THIS topic it is the
       // principal who requested the deletion, and identity sets it from `input.actor`
-      // (`identity/src/deletion.ts:120`), which is the deleted user only when the user deleted
+      // (`identity/src/deletion.ts`), which is the deleted user only when the user deleted
       // themselves.
       //
       // So an operator-initiated or service-initiated deletion destroyed the OPERATOR's salt —

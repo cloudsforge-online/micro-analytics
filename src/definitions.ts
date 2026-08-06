@@ -4,7 +4,7 @@
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  * **A REDEFINITION CREATES A NEW ID. IT NEVER EDITS AN OLD ONE.**
  *
- * 13-operational-model.md:637 states the rule and the reason in one sentence: "a retention number
+ * 13-operational-model.md states the rule and the reason in one sentence: "a retention number
  * that changed definition in March is a chart that lies about February". Definitions are versioned
  * *in this repository*, which is what :636 asks for, and the database holds a checksum over the
  * numerator, the denominator and the window of every version ever published.
@@ -15,7 +15,7 @@
  * leaves the old series intact, with the definition it was computed under still readable beside it.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * Every entry carries numerator, denominator and window, because 13-operational-model.md:611 says
+ * Every entry carries numerator, denominator and window, because 13-operational-model.md says
  * "every metric states numerator, denominator and window" and a metric that does not is a number
  * two people will read differently. The `metric` field cites the row in 13 §12 it implements.
  *
@@ -23,7 +23,7 @@
  * 4, 9, 11, 12, 13 and 14 name events (`identity.email.verified`, `wallet.address.assigned`,
  * `mint.order.created`, `trade.bot.started`, `worlds.session.started`, `membership.joined`,
  * `proposal.voted`) that `contracts-events` does not register — eighteen topics, checked at
- * `contracts/packages/events/src/index.ts:222-349`. A definition for a metric whose input event
+ * `contracts/packages/events/src/index.ts`. A definition for a metric whose input event
  * cannot be emitted would be a definition that silently reports zero for ever, which is worse than
  * its absence. They are listed in the README as the work this service is waiting on.
  */
@@ -242,7 +242,7 @@ export interface StoredDefinition {
   readonly publishedAt: string
 }
 
-/** The changelog. Every version ever published, newest first — 13-operational-model.md:636. */
+/** The changelog. Every version ever published, newest first — 13-operational-model.md. */
 export async function listDefinitions(sql: Db): Promise<readonly StoredDefinition[]> {
   const rows = await sql<
     {

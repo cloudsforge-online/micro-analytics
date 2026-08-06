@@ -15,14 +15,14 @@
  * The alternative design, mapping each topic's domain payload onto analytics properties, would put
  * a per-topic function in front of a listing title and rely on that function to be careful. Twenty
  * producers, eighteen topics and a changelog later, one of those functions passes a name through.
- * 16-risks-and-open-decisions.md:75 names the review trigger as "any PR adding a field to the
+ * 16-risks-and-open-decisions.md names the review trigger as "any PR adding a field to the
  * analytics envelope", which is a trigger that only means something if the envelope is a real,
  * separate, opt-in object — so it is one.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * Within the analytics envelope, every key must be in `PROPERTIES` and every value must satisfy
  * its declared type. A key that is not, or a value that does not, is **dropped and counted** —
- * 11-data-and-contract-strategy.md:515: "the ingest path rejects an event carrying any of those
+ * 11-data-and-contract-strategy.md: "the ingest path rejects an event carrying any of those
  * keys rather than dropping the key silently". The producer is told which keys were refused in the
  * response to its own signed delivery; the database records a count by reason and topic and never
  * the key itself, because a key can be the personal data (`{"spiros_lives_at": 1}`) just as easily
@@ -72,7 +72,7 @@ export interface Sanitised {
    * one. **Pseudonymised by the caller and never stored.**
    *
    * It has to be here, and the reason is a gap in the shipped contract rather than a preference.
-   * The envelope's `actor` is "who caused this" (`contracts/packages/events/src/index.ts:56-61`),
+   * The envelope's `actor` is "who caused this" (`contracts/packages/events/src/index.ts`),
    * which for `wallet.deposit.confirmed` is a chain confirmation and not the depositor; and the
    * envelope's `key` is the ordering partition, which `TOPICS` sets to `wallet_id` for deposits,
    * `account_id` for ledger entries and `listing_id` for sales (`:276,262,338`). Neither field

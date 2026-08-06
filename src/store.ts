@@ -44,7 +44,7 @@ export interface StoredEvent {
  * `on conflict (source_event_id) do nothing` and a null return rather than a thrown 23505: the
  * only way to reach it is the same event id arriving under a different topic, which is a producer
  * bug — but the honest answer is still "we already have it", not a 500 that makes the relay retry
- * for ever. Same reasoning as `activity/src/ingest.ts:204-205`.
+ * for ever. Same reasoning as `activity/src/ingest.ts`.
  */
 export async function insertEvent(tx: Tx, event: NewEvent): Promise<StoredEvent | null> {
   const rows = await tx<{ id: string; event_name: string; occurred_at: Date }[]>`

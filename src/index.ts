@@ -16,7 +16,7 @@
  * blocks on one. The only hard probe is Postgres: without it this service can answer `/livez` and
  * nothing else worth having, because every event, cohort and funnel is a row. Identity is a SOFT
  * probe — `/metrics` falls back to the static token, and a funnel that cannot be read for ten
- * minutes is not a reason to take a replica out of the balancer. 13-operational-model.md:189
+ * minutes is not a reason to take a replica out of the balancer. 13-operational-model.md
  * classifies this plane as "durable but lossy by design", which is the same judgement.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *

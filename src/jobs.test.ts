@@ -299,7 +299,7 @@ describe('jobs', { skip }, () => {
     })
 
     it('does not count an authentication-only user as active', async () => {
-      // 13-operational-model.md:611 — "at least one NON-AUTHENTICATION event in the window". A user
+      // 13-operational-model.md — "at least one NON-AUTHENTICATION event in the window". A user
       // who signs in and leaves is not an active user, and counting them flatters every number.
       const key = await subjectKeyFor('user:aaaa')
       const signup = new Date('2026-01-05T00:00:00.000Z')

@@ -27,12 +27,12 @@ them.
 ### The estate's specified construction has a defect, and it is fatal to the only promise made here
 
 Four documents specify `subject_key = HMAC(user_id, analytics_pepper)`
-(`02-target-architecture.md:596-597`, `11-data-and-contract-strategy.md:509-510`,
-`13-operational-model.md:596-597`, `10-migration-strategy.md:509`). Taken literally that is a **pure
+(`02-target-architecture.md`, `11-data-and-contract-strategy.md`,
+`13-operational-model.md`, `10-migration-strategy.md`). Taken literally that is a **pure
 function of two things that both survive**, so it cannot be erased. Delete every row you like:
 anyone holding the pepper and a candidate user id recomputes the key and finds that person's entire
 four-hundred-day behavioural history. That is not a pseudonym, it is an index into a person — and
-`10-migration-strategy.md:492` ("Pseudonymised events — `analytics` — Deleted by `subject_key`")
+`10-migration-strategy.md` ("Pseudonymised events — `analytics` — Deleted by `subject_key`")
 assumes an erasure it cannot deliver.
 
 ### What is here instead: a per-subject salt, which is the only thing that can be destroyed
@@ -59,7 +59,7 @@ that takes one, and its return type contains no path back.
 memory, and in **the deploy's secret store**. Nowhere else:
 
 - **never written to this service's database.** There is no pepper column and there will not be
-  one. `13-operational-model.md:597` requires it to be absent from any backup that also contains
+  one. `13-operational-model.md` requires it to be absent from any backup that also contains
   the identity database; keeping it out of this database is the strongest form of that available to
   a service that owns exactly one database.
 - **never logged.** The logger declares `redactKeys: ['pseudonymKey', 'pepper', 'deliverySecrets']`,
@@ -105,7 +105,7 @@ proves the other three:
 | `subject_keys_erased` | an "erasure" that kept the salt |
 
 There is no `user_id`, `email`, `handle`, `address`, `amount`, `balance`, `ip` or `display_name`
-column in any table. `11-data-and-contract-strategy.md:512` asks for that as a CI check; it is
+column in any table. `11-data-and-contract-strategy.md` asks for that as a CI check; it is
 `migrations.test.ts` reading `information_schema.columns` on the real migrated schema, which fails
 the build in the same place and can see a column a grep over source would miss.
 
@@ -137,7 +137,7 @@ a count by day, reason and topic and **never the key itself**, because a key can
 data (`{"spiros_lives_at": 1}`) just as easily as a value can.
 
 Money arrives **bucketed** (`lt10`, `10_100`, `100_1k`, `1k_10k`, `gt10k`), never exact —
-`13-operational-model.md:598-600`. Actual revenue comes from the ledger (`13:630`), never from here.
+`13-operational-model.md`. Actual revenue comes from the ledger (`13:630`), never from here.
 There is no amount column and no balance column.
 
 ---
@@ -155,7 +155,7 @@ update subject_keys set subject_key = null, salt = null, erased_at = now() where
 **The salt is destroyed.** After that, `subject_key` is unreachable from `subject` — not "hard",
 unreachable: recomputing it would require guessing 32 bytes that no longer exist anywhere, under a
 pepper that is not in this database. The events keep their now-orphaned pseudonym and become
-anonymous data about nobody, which is exactly what `11-data-and-contract-strategy.md:468` already
+anonymous data about nobody, which is exactly what `11-data-and-contract-strategy.md` already
 claims of this service ("Nothing to do — it never held a `user_id`") and what the specified
 construction could not have made true.
 
@@ -171,7 +171,7 @@ against a mapping whose salt was retained, and it **fails**, so the assertion is
 Two consequences, stated rather than implied:
 
 - **The events are not deleted.** After the salt is gone they identify nobody, and deleting them
-  would retroactively rewrite every historical funnel and cohort — which `13-operational-model.md:637`
+  would retroactively rewrite every historical funnel and cohort — which `13-operational-model.md`
   forbids in the strongest terms it uses anywhere ("a retention number that changed definition in
   March is a chart that lies about February").
 - **The tombstone is a one-bit oracle.** The row survives holding only `lookup_key` and a timestamp,
@@ -186,7 +186,7 @@ A late event for an erased subject is refused and counted as `erased_subject`, n
 
 ## Retention is a job that runs
 
-`11-data-and-contract-strategy.md:434` gives analytics events four hundred days. A retention policy
+`11-data-and-contract-strategy.md` gives analytics events four hundred days. A retention policy
 that lives only in a table in a document is a policy that has never deleted a row, so:
 
 | Data | Horizon | Why |
@@ -205,7 +205,7 @@ Order matters: events go first, so the subject prune sees the store as it will b
 mapping whose last event has just expired. The other way round keeps every mapping one sweep longer
 than it needs to exist.
 
-**Not partitioned yet.** `13-operational-model.md:655` says "append-only, partitioned monthly", and
+**Not partitioned yet.** `13-operational-model.md` says "append-only, partitioned monthly", and
 that is the right answer at volume. It is deliberately deferred: declarative partitioning forces the
 partition key into every unique constraint, so `source_event_id` becomes `(occurred_at,
 source_event_id)` — which no longer refuses a redelivery whose producer restamped the time. The day
@@ -265,8 +265,8 @@ away.
 
 `18-build-status.md §3.3h` records that the estate ships two scope matchers that disagree:
 
-- `contracts/packages/auth/src/index.ts:209` — `granted.includes(required)`, **exact only**
-- `runtime/packages/auth/src/index.ts:178` — honours one wildcard level, so `analytics:*` grants
+- `contracts/packages/auth/src/index.ts` — `granted.includes(required)`, **exact only**
+- `runtime/packages/auth/src/index.ts` — honours one wildcard level, so `analytics:*` grants
   `analytics:read`
 
 Both are shipped, both are CI-green, and §3.3h leaves it open on purpose because changing an
@@ -284,15 +284,15 @@ choice cannot drift back.
 The scopes are `analytics:read` and `analytics:admin`. An operator (an admin user) may read. **An
 ordinary user token may not, whatever it carries** — there is no per-user view of this data and there
 is not going to be one, because a per-user view is the support question AD-21 exists to make
-unanswerable (`13-operational-model.md:603-608`).
+unanswerable (`13-operational-model.md`).
 
 **There is no `analytics:ingest`, and that is the repair rather than an omission.** `POST /ingest`
 demanded that scope and no producer in this estate could present it: an outbox relay sends the
 delivery signature and the event id and nothing else — all twenty-one relays were read, not assumed,
-`identity/src/outbox.ts:320` being the canonical one — so every event this service exists to consume
+`identity/src/outbox.ts` being the canonical one — so every event this service exists to consume
 died `401` at the first line of the handler, and every funnel metric was computed against an empty
 denominator behind a service reporting itself healthy. The route is now **MAC-only**, the same
-repair `micro-notify` (`server.ts:418`) and `micro-activity` made, and the constant was deleted
+repair `micro-notify` (`server.ts`) and `micro-activity` made, and the constant was deleted
 rather than left unreferenced. `contracts/packages/auth` and `deploy/compose` still carry the now
 unused scope; both are reported to their owners rather than edited from here.
 
@@ -309,7 +309,7 @@ unused scope; both are reported to their owners rather than edited from here.
   parses them — which matters more now that it is the only thing in front of the parser, and a parser
   is an attack surface reachable by anyone who can open a socket. `contracts-events` registers no
   `analytics.*` topic and names this service as one that "is only ever a consumer"
-  (`contracts/packages/events/src/index.ts:174`), so there is no outbox here — an outbox would come
+  (`contracts/packages/events/src/index.ts`), so there is no outbox here — an outbox would come
   with a relay job, a signing secret in the deploy, and a permanently empty dashboard panel.
 - **Deduped on the inbox**, primary key `(topic, event_id)`, claimed in the same transaction as the
   work — so a handler that throws leaves no inbox row and the redelivery is processed rather than
@@ -341,15 +341,15 @@ This repository does not edit a sibling. Three things were found while building 
 
 1. **`contracts-events` registers no frontend topic.** AD-21 requires `page_viewed`, `cta_clicked`
    and `form_abandoned` (plus the `form_started` that metric 19's denominator needs) to arrive
-   "through the same envelope" (`13-operational-model.md:590`), and `TOPICS` holds eighteen
+   "through the same envelope" (`13-operational-model.md`), and `TOPICS` holds eighteen
    server-side topics and none of those four. They are **forward-declared** in `src/catalogue.ts` and
    accepted through a narrower validation path; they will be deleted from there the day `contracts`
    registers them. Until a producer emits them, metrics 1, 2, 19 and 20 report on the server-side
    half only.
-2. **`03-repository-responsibilities.md:204` is not implementable as written.** It says analytics
+2. **`03-repository-responsibilities.md` is not implementable as written.** It says analytics
    "must never RECEIVE a `user_id`", but `EventEnvelope.actor` is `user:<user_id>` and `key` is
    `user_id` on eleven of the eighteen topics, so every delivery this service is entitled to read
-   carries one. `10-migration-strategy.md:509` says the opposite — that analytics must be *sent* a
+   carries one. `10-migration-strategy.md` says the opposite — that analytics must be *sent* a
    precomputed key — which would put the pepper in identity and in every other producer, contradicting
    the three documents that say it "lives only in the analytics service". Resolved the only way that
    is both implementable and stronger: receive it, convert it at the boundary, never store it, and

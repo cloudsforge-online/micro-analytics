@@ -70,7 +70,7 @@ describe('ingest', { skip }, () => {
    * The `identity.user.deleted` envelope AS IDENTITY SENDS IT.
    *
    * `payload: { userId, tombstoneAt, reason }`, key = the bare user id
-   * (`identity/src/deletion.ts:113-125`). The `actor` is whoever ASKED for the deletion, which is
+   * (`identity/src/deletion.ts`). The `actor` is whoever ASKED for the deletion, which is
    * the user only when they deleted themselves — so it is deliberately set to an operator here by
    * default. These tests used to pass `{ actor: SPIROS }` with an empty payload, which is why the
    * handler reading `actor` looked correct: the test and the handler agreed with each other and
@@ -303,7 +303,7 @@ describe('ingest', { skip }, () => {
       // all eighteen registered topics — so the envelope is constructed directly, which is exactly
       // the shape a newer contracts package would hand the same function.
       //
-      // Different from `activity`, on purpose. `activity/src/ingest.ts:26-30` quarantines such an
+      // Different from `activity`, on purpose. `activity/src/ingest.ts` quarantines such an
       // event WITH its payload so it can be reclassified later. Here the payload never passed the
       // property allowlist, so keeping it would be the exact hole the allowlist closes.
       // ─────────────────────────────────────────────────────────────────────────────────────────
@@ -394,7 +394,7 @@ describe('ingest', { skip }, () => {
     it('erases the user the event NAMES, not the operator who requested it', async () => {
       // ═══════════════════════════════════════════════════════════════════════════════════════
       // The handler read `envelope.actor`. On this topic the actor is whoever ASKED for the
-      // deletion — `identity/src/deletion.ts:120` sets it from `input.actor` — so an erasure
+      // deletion — `identity/src/deletion.ts` sets it from `input.actor` — so an erasure
       // raised by support destroyed the SUPPORT OPERATOR's salt and left the account that asked
       // to be forgotten fully attributable. Data loss for one person and a null erasure for
       // another, from one line.

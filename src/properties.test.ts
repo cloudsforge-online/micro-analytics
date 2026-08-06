@@ -4,7 +4,7 @@
  * Half of these are hostile inputs shaped like the real thing: a display name, a listing title, an
  * email, a chat line. Each is a re-identification vector and a GDPR erasure problem, and each must
  * be refused *and counted* rather than dropped quietly —
- * 11-data-and-contract-strategy.md:509-515.
+ * 11-data-and-contract-strategy.md.
  */
 
 import assert from 'node:assert/strict'

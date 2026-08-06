@@ -4,7 +4,7 @@
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  * **A RETENTION NUMBER THAT CHANGED DEFINITION IN MARCH IS A CHART THAT LIES ABOUT FEBRUARY.**
  *
- * 13-operational-model.md:637, and it is the whole of this file. `publish()` is not an upsert:
+ * 13-operational-model.md, and it is the whole of this file. `publish()` is not an upsert:
  * republishing `(id, version)` with different arithmetic THROWS, and the `metric_definitions`
  * trigger refuses the UPDATE that would paper over it. Both are asserted, and the second matters
  * independently of the first — a future code path that reached for `on conflict do update` would
@@ -53,7 +53,7 @@ describe('metric definitions', { skip }, () => {
 
   describe('the catalogue this build carries', () => {
     it('states numerator, denominator and window for every metric', () => {
-      // 13-operational-model.md:611. A metric that does not is a number two people read differently.
+      // 13-operational-model.md. A metric that does not is a number two people read differently.
       for (const definition of DEFINITIONS) {
         assert.ok(definition.numerator.length > 0, `${definition.id} has no numerator`)
         assert.ok(definition.denominator.length > 0, `${definition.id} has no denominator`)
@@ -67,7 +67,7 @@ describe('metric definitions', { skip }, () => {
     })
 
     it('says outright that revenue comes from the ledger', () => {
-      // 13-operational-model.md:630. This service holds amount_bucket and no amount, so a revenue
+      // 13-operational-model.md. This service holds amount_bucket and no amount, so a revenue
       // number computed here would be a range dressed up as a total.
       const revenue = DEFINITIONS.find((definition) => definition.id === 'revenue.shape')
       assert.ok(revenue)

@@ -1,7 +1,7 @@
 /**
  * Configuration, and the two variables whose absence must stop the process.
  *
- * The DSN-variable assertion at the bottom is not decoration. `service-ci.yml:234-241` fails the
+ * The DSN-variable assertion at the bottom is not decoration. `service-ci.yml` fails the
  * build if the database-backed suite skipped, and it detects that by grepping the output for the
  * skip message — which only appears if `testsupport.ts` read the variable the workflow exported. A
  * misspelling here would skip silently and turn the estate's false-green guard into the false green
@@ -147,7 +147,7 @@ describe('env', () => {
     })
 
     it('accepts what the runbook tells an operator to generate', () => {
-      // `runbook-analytics-pseudonym-key.md:68` is
+      // `runbook-analytics-pseudonym-key.md` is
       // `openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | cut -c1-48`. A guard that refused the
       // estate's own documented command would be a guard somebody removes, so this is pinned.
       const runbookShaped = randomBytes(64).toString('base64').replace(/[^A-Za-z0-9]/g, '').slice(0, 48)
@@ -228,7 +228,7 @@ describe('env', () => {
     it('never puts the value in the error message', () => {
       // The fatal handler writes `err.message` to stderr, where the collector picks it up. A
       // message carrying the pepper would put it in Loki, in every backup of Loki, and in the
-      // one place 13-operational-model.md:597 says it must never be.
+      // one place 13-operational-model.md says it must never be.
       const secret = 'aaaaaaaaaaaaaaaaaaaaaaaa'
       try {
         loadEnv({ ...BASE, ANALYTICS_PSEUDONYM_KEY: secret })
@@ -321,7 +321,7 @@ describe('env', () => {
 
   it('reads its own test database variable, spelled exactly as service-ci.yml exports it', () => {
     // `<SERVICE>_DATABASE_URL` with `_DATABASE_URL` replaced by `_TEST_DATABASE_URL`, which is what
-    // `service-ci.yml:223` does. Assembled rather than written, so this test agrees with the rule
+    // `service-ci.yml` does. Assembled rather than written, so this test agrees with the rule
     // rather than restating it — and so Rule 1's grep does not read it as a second database.
     const declared = 'ANALYTICS_DATABASE_URL'
     assert.equal(TEST_DSN_VAR, declared.replace('_DATABASE_URL', '_TEST_DATABASE_URL'))

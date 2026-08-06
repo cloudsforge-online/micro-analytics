@@ -23,8 +23,8 @@
  * **THE SCOPE MATCHER: EXACT, DELIBERATELY, AND NEITHER PACKAGE IS CHANGED.**
  *
  * 18-build-status.md §3.3h records that the estate ships two scope matchers that disagree:
- * `contracts/packages/auth/src/index.ts:209` is `granted.includes(required)` — exact only — and
- * `runtime/packages/auth/src/index.ts:178` honours one wildcard level, so `analytics:*` grants
+ * `contracts/packages/auth/src/index.ts` is `granted.includes(required)` — exact only — and
+ * `runtime/packages/auth/src/index.ts` honours one wildcard level, so `analytics:*` grants
  * `analytics:read`. Both are shipped, both are CI-green, and §3.3h leaves the disagreement open on
  * purpose because changing an authorisation matcher is the highest-blast-radius edit in this
  * estate.
@@ -122,8 +122,8 @@ const SAFE_IDEMPOTENCY_KEY = /^[A-Za-z0-9_.:-]{8,128}$/
  * reason rather than registering it.
  *
  * Two orphans outside this repository follow from that and are REPORTED, not edited here:
- * `contracts/packages/auth/src/index.ts:187` still registers `analytics:ingest` in the estate's
- * scope vocabulary, and `deploy/compose/docker-compose.estate.yml:302` still mints it into the
+ * `contracts/packages/auth/src/index.ts` still registers `analytics:ingest` in the estate's
+ * scope vocabulary, and `deploy/compose/docker-compose.estate.yml` still mints it into the
  * analytics service token. Neither is harmful — an unused scope grants nothing — and neither
  * repository is this one's to change.
  */
@@ -150,7 +150,7 @@ function requireExactScope(principal: Principal, required: string): void {
  * A scoped service token, or an operator. **Never an ordinary user token**, whatever it carries:
  * there is no per-user view of this data and there is not going to be one, because a per-user view
  * is the support question AD-21 exists to make unanswerable
- * (13-operational-model.md:603-608).
+ * (13-operational-model.md).
  */
 function requireReader(principal: Principal): void {
   if (isAdmin(principal)) return
@@ -477,7 +477,7 @@ function buildRoutes(): Route[] {
        * This handler used to call `authenticate()` and demand an `analytics:ingest` scope before
        * it read a byte. **No producer in this estate could ever satisfy it.** Every outbox relay
        * sends exactly two headers — the delivery signature and the event id — and nothing else;
-       * `identity/src/outbox.ts:320` is the canonical one, and all twenty-one relays in the estate
+       * `identity/src/outbox.ts` is the canonical one, and all twenty-one relays in the estate
        * were checked, not assumed. A relay is a background job woken by a Postgres poll: it has no
        * session, no user, and no way to mint a token. So every event bound for this service died
        * 401 at this line, always, and the onboarding denominator every funnel metric divides by
@@ -492,7 +492,7 @@ function buildRoutes(): Route[] {
        * nothing about the bytes; the MAC proves the bytes were produced by something holding the
        * estate's outbox signing secret, which is a strictly stronger statement about the thing
        * that actually matters here — the content of the row. A signed-in person still cannot reach
-       * this route, because a person does not hold that secret. `micro-notify` (`server.ts:418`)
+       * this route, because a person does not hold that secret. `micro-notify` (`server.ts`)
        * and `micro-activity` made this exact repair for this exact reason; `trade` and `worlds`
        * shaped their inboxes this way from the start.
        *
