@@ -49,6 +49,8 @@ import { SIGNATURE_HEADER } from '@cloudsforge/contracts-events'
 import { ForbiddenError, TokenError, bearerFrom, isAdmin, statusFor, type Principal } from '@cloudsforge/auth'
 import type { JobQueue } from '@cloudsforge/jobs'
 import type { Lifecycle } from '@cloudsforge/lifecycle'
+import { NetworkUnknownError, requestNetwork, type Network } from '@cloudsforge/http'
+import type { NetworkSql } from '@cloudsforge/db'
 import { Metrics, newRequestId, type Logger } from '@cloudsforge/telemetry'
 import { EVENT_NAMES, FUNNELS, PROPERTIES, PROPERTY_NAMES } from './catalogue.ts'
 import { DEFINITIONS, DefinitionChangedError, listDefinitions, publish } from './definitions.ts'
@@ -89,7 +91,16 @@ export interface ServerDeps {
   readonly logger: Logger
   readonly metrics: Metrics
   readonly verifier: PrincipalVerifier
-  readonly sql: Db
+  /**
+   * The per-network SELECTOR, not a handle. Routes use `ctx.sql`; `NetworkSql` has no query
+   * methods, so reaching for the process-wide handle does not compile.
+   */
+  readonly sql: NetworkSql
+  /**
+   * The network to assume when no `CF-Network` arrives, or `undefined` to refuse. `CF_NETWORK_SINGLE`,
+   * for `pnpm dev`, which has no gateway in front of it. Never set in production.
+   */
+  readonly singleNetwork?: Network
   readonly ingest: IngestDeps
   /** Gates `/metrics`. Compared in constant time; see `presentsToken`. */
   readonly token: string
@@ -230,6 +241,8 @@ export function registerServiceMetrics(metrics: Metrics): Metrics {
 /** Sample the store gauges. Called at scrape time, never on a timer — rule 8. */
 export function scrapeRefresh(deps: { sql: Db; metrics: Metrics }): () => Promise<void> {
   return async () => {
+    // `deps.sql` here is this helper's OWN record, not the server's selector — it is called from
+    // the scrape path, which has no request and therefore no network. Left alone deliberately.
     const summary = await storeSummary(deps.sql)
     deps.metrics.set('analytics_events_stored', summary.events)
     deps.metrics.set('analytics_subjects_live', summary.subjects)
@@ -273,7 +286,32 @@ interface RequestContext {
   readonly requestId: string
   readonly log: Logger
   readonly params: Readonly<Record<string, string>>
+  /**
+   * The network THIS REQUEST belongs to, from the `CF-Network` header the gateway stamped.
+   *
+   * Not a property of the process: one pod serves both estates since the network consolidation
+   * (micro-deploy `docs/network-consolidation.md`), so "which network am I" has no answer.
+   */
+  readonly network: Network
+  /**
+   * The database handle for `network`, resolved ONCE, at the edge of the request.
+   *
+   * Every route uses this rather than reaching for the process-wide handle, because a wrong handle
+   * is not an error — it is a query that SUCCEEDS against the other estate's rows and says nothing.
+   * `deps.sql` is a `NetworkSql` with no query methods, so the mistake does not compile.
+   */
+  readonly sql: Db
 }
+
+/**
+ * Routes that answer without belonging to a network.
+ *
+ * Kubelet probes the first two and Prometheus scrapes the third; none arrives through the gateway,
+ * so none carries `CF-Network`. Refusing them makes every health probe a 500 and the pod never
+ * becomes ready. Three literal paths rather than a prefix, because this is an exemption from a data
+ * boundary; none of them queries the database.
+ */
+const OPERATIONAL_ROUTES: ReadonlySet<string> = new Set(['/livez', '/readyz', '/metrics'])
 
 interface Route {
   readonly method: string
@@ -332,24 +370,62 @@ export function createServer(deps: ServerDeps): Server {
     inFlight += 1
     deps.metrics.set('http_requests_in_flight', inFlight)
 
-    const finish = (status: number) => {
+    const finish = (status: number, metricNetwork: string) => {
       inFlight -= 1
       deps.metrics.set('http_requests_in_flight', inFlight)
       const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6
-      deps.metrics.increment('http_requests_total', { method, route: routeLabel, status: String(status) })
-      deps.metrics.observe('http_request_duration_ms', durationMs, { method, route: routeLabel })
+      deps.metrics.increment('http_requests_total', {
+        method,
+        route: routeLabel,
+        status: String(status),
+        // One target now serves both estates, so the network has to be on the SERIES. Labelled
+        // per target it would say nothing — micro-org#398 in a form nothing could recover.
+        network: metricNetwork,
+      })
+      deps.metrics.observe('http_request_duration_ms', durationMs, {
+        method,
+        route: routeLabel,
+        network: metricNetwork,
+      })
     }
 
-    void handle(matched, { req, url, requestId, log, params }, deps)
+    // ── THE NETWORK, THEN THE HANDLE, BEFORE ANY ROUTE RUNS ──────────────────────────────────
+    //
+    // `requestNetwork` REFUSES an unstamped request rather than assuming mainnet: a 500 is a
+    // routing fault made loud, where a default is a cross-network write nothing would ever flag.
+    //
+    // The operational endpoints are exempt because kubelet and Prometheus do not come through the
+    // gateway and never send the header. Refusing them makes the pod never become ready.
+    const networkless = matched !== undefined && OPERATIONAL_ROUTES.has(matched.path)
+    let network: Network
+    try {
+      network = networkless
+        ? (deps.singleNetwork ?? deps.sql.networks[0] ?? 'mainnet')
+        : requestNetwork(req.headers, deps.singleNetwork ? { fallback: deps.singleNetwork } : {})
+    } catch (err) {
+      log.error('request carries no usable network', {
+        err: err instanceof NetworkUnknownError ? err.message : err,
+      })
+      send(
+        res,
+        errorReply(500, 'network_unknown', 'this request could not be attributed to a network', requestId),
+        requestId,
+      )
+      finish(500, 'unknown')
+      return
+    }
+
+    const sql = deps.sql.for(network) as unknown as Db
+    void handle(matched, { req, url, requestId, log, params, network, sql }, deps)
       .then((reply) => {
         send(res, reply, requestId)
-        finish(reply.status)
+        finish(reply.status, network)
       })
       .catch((err: unknown) => {
         // Reaching here means the error mapping itself failed. Answer, then say so loudly.
         log.error('request handler threw after mapping', { err })
         send(res, errorReply(500, 'internal', 'the request could not be completed', requestId), requestId)
-        finish(500)
+        finish(500, network)
       })
   })
 }
@@ -551,7 +627,7 @@ function buildRoutes(): Route[] {
           throw new BadRequestError(`event must be one of: ${EVENT_NAMES.join(', ')}`)
         }
         const window = parseWindow(ctx.url, deps.now)
-        const points = await dailySeries(deps.sql, event, window, deps.minCohort)
+        const points = await dailySeries(ctx.sql, event, window, deps.minCohort)
         return { status: 200, body: { event, minCohort: deps.minCohort, points } }
       },
     },
@@ -561,7 +637,7 @@ function buildRoutes(): Route[] {
       handle: async (ctx, deps) => {
         requireReader(await authenticate(ctx, deps))
         const window = parseWindow(ctx.url, deps.now)
-        const count = await activeSubjects(deps.sql, window, deps.minCohort)
+        const count = await activeSubjects(ctx.sql, window, deps.minCohort)
         return { status: 200, body: { minCohort: deps.minCohort, count } }
       },
     },
@@ -580,7 +656,7 @@ function buildRoutes(): Route[] {
         requireReader(await authenticate(ctx, deps))
         const id = ctx.params['id'] ?? ''
         const window = parseWindow(ctx.url, deps.now)
-        const result = await funnelById(deps.sql, id, window, deps.minCohort)
+        const result = await funnelById(ctx.sql, id, window, deps.minCohort)
         if (!result) throw new NotFoundError(`no funnel ${id}; the catalogue is closed`)
         return { status: 200, body: { minCohort: deps.minCohort, ...result } }
       },
@@ -591,7 +667,7 @@ function buildRoutes(): Route[] {
       handle: async (ctx, deps) => {
         requireReader(await authenticate(ctx, deps))
         const weeks = parseInteger(ctx.url.searchParams.get('weeks'), 'weeks', 12, 2, 52)
-        const cells = await retentionGrid(deps.sql, weeks, deps.minCohort, deps.now)
+        const cells = await retentionGrid(ctx.sql, weeks, deps.minCohort, deps.now)
         return { status: 200, body: { minCohort: deps.minCohort, weeks, cells } }
       },
     },
@@ -600,7 +676,7 @@ function buildRoutes(): Route[] {
       path: '/definitions',
       handle: async (ctx, deps) => {
         requireReader(await authenticate(ctx, deps))
-        return { status: 200, body: { definitions: await listDefinitions(deps.sql) } }
+        return { status: 200, body: { definitions: await listDefinitions(ctx.sql) } }
       },
     },
     {
@@ -626,7 +702,7 @@ function buildRoutes(): Route[] {
       handle: async (ctx, deps) => {
         requireReader(await authenticate(ctx, deps))
         const days = parseInteger(ctx.url.searchParams.get('days'), 'days', 7, 1, 400)
-        return { status: 200, body: { days, rejections: await listRejections(deps.sql, days) } }
+        return { status: 200, body: { days, rejections: await listRejections(ctx.sql, days) } }
       },
     },
 
@@ -643,7 +719,7 @@ function buildRoutes(): Route[] {
         const principal = await authenticate(ctx, deps)
         requireExactScope(principal, SCOPE_ADMIN)
         const clientKey = idempotencyKeyOf(ctx.req)
-        const outcome = await withIdempotency(deps.sql, {
+        const outcome = await withIdempotency(ctx.sql, {
           principal: principalName(principal),
           route: 'POST /definitions',
           clientKey,
@@ -671,7 +747,7 @@ function buildRoutes(): Route[] {
         const principal = await authenticate(ctx, deps)
         requireExactScope(principal, SCOPE_ADMIN)
         const clientKey = idempotencyKeyOf(ctx.req)
-        const outcome = await withIdempotency(deps.sql, {
+        const outcome = await withIdempotency(ctx.sql, {
           principal: principalName(principal),
           route: 'POST /cohorts/recompute',
           clientKey,
