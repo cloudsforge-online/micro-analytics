@@ -22,6 +22,7 @@
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  */
 
+import { networkSql, type Sql as RuntimeSql } from '@cloudsforge/db'
 import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 import type { AddressInfo } from 'node:net'
@@ -92,7 +93,8 @@ describe('the HTTP surface', { skip }, () => {
       logger: quietLogger(),
       metrics,
       verifier,
-      sql,
+      sql: singleNetworkSql(sql),
+      singleNetwork: 'mainnet' as const,
       token: TOKEN,
       minCohort: 5,
       queue,
@@ -515,3 +517,12 @@ describe('the HTTP surface', { skip }, () => {
     })
   })
 })
+
+/**
+ * One handle, presented as the per-network selector the server now takes. The fixtures run against
+ * a single test database, so mainnet is the only configured network — which exercises the REFUSAL
+ * path for free: anything reaching for testnet throws rather than reusing this handle.
+ */
+function singleNetworkSql(db: unknown) {
+  return networkSql({ mainnet: db as RuntimeSql })
+}
