@@ -611,7 +611,25 @@ function buildRoutes(): Route[] {
         const rawBody = await readRaw(ctx.req)
         verifySignature(deps.ingest, rawBody, headerOf(ctx.req, SIGNATURE_HEADER))
         const delivery = parseDelivery(rawBody)
-        const outcome = await ingest(deps.ingest, delivery)
+        // ── `ctx.sql`, NOT `deps.ingest.sql` ────────────────────────────────
+        //
+        // `deps.ingest.sql` is the process-wide PRIMARY handle, fixed at boot
+        // (`index.ts` builds `ingest: { sql, … }` from the primary pool). Every
+        // other route in this file reads `ctx.sql`, which `networkSql` resolves
+        // once per request from `CF-Network`.
+        //
+        // So this route — and only this route — ignored the header and wrote
+        // every delivery into the mainnet database, whatever network it was
+        // stamped for. It is the exact failure `@cloudsforge/db` calls the
+        // single most important line in that file, and the one `network.test.ts`
+        // asserts against for every route it covers. This route was not covered.
+        //
+        // Caught before it ever fired: both `events` tables were empty on
+        // 2026-08-26, because analytics' only subscription is
+        // `identity.user.deleted` and no user has been deleted. There is
+        // therefore nothing to migrate — which is why this is a one-line fix
+        // now and would have been a data-repair later.
+        const outcome = await ingest({ ...deps.ingest, sql: ctx.sql as unknown as Db }, delivery)
 
         switch (outcome.status) {
           case 'duplicate':

@@ -10,6 +10,7 @@
  */
 import { describe, it } from 'node:test'
 import { strict as assert } from 'node:assert'
+import { readFileSync } from 'node:fs'
 import { NetworkNotConfiguredError, networkSql, type Sql as RuntimeSql } from '@cloudsforge/db'
 import { NetworkUnknownError, requestNetwork } from '@cloudsforge/http'
 
@@ -70,9 +71,53 @@ describe('the operational endpoints are exempt, and only they', () => {
   })
 
   it('does not exempt anything that reads or writes', () => {
-    for (const p of ['/v1/events', '/v1/cohorts', '/v1/summary']) {
+    // The REAL route table, not invented names. This assertion used to name
+    // `/v1/events`, `/v1/cohorts` and `/v1/summary`, none of which this service
+    // has ever served — so it asserted that three strings absent from a
+    // three-element set were absent from it, and passed for ever.
+    for (const p of ['/ingest', '/reports/daily', '/funnels', '/definitions', '/catalogue']) {
       assert.ok(!OPERATIONAL.includes(p), `${p} must carry a network`)
     }
+  })
+})
+
+describe('every database-touching handler resolves the network per request', () => {
+  /*
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   * THE ROUTE THAT DID NOT, AND WHY NOTHING NOTICED.
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   *
+   * `POST /ingest` called `ingest(deps.ingest, delivery)`. `deps.ingest.sql` is the process-wide
+   * PRIMARY handle, fixed at boot by `index.ts`; `ctx.sql` is what `networkSql` resolves from
+   * `CF-Network` once per request. So a delivery stamped `testnet` was written into the mainnet
+   * database, silently, with a 200.
+   *
+   * The behavioural tests above cannot see it: they assert what happens when a network is UNKNOWN
+   * or ABSENT, and this route resolved a network correctly and then ignored it. The only
+   * distinguishing evidence is which handle the write went through, which is a fact about the
+   * source rather than about a response.
+   *
+   * Hence a source assertion. It is narrow on purpose — it does not try to prove every handler is
+   * correct, only that no handler passes the boot-time handle where the per-request one belongs.
+   */
+  const server = readFileSync(new URL('./server.ts', import.meta.url), 'utf8')
+
+  it('no handler passes the boot-time ingest handle to a write', () => {
+    // `deps.ingest` may still be read for its secrets and peppers — those are process-wide by
+    // design. What must not appear is it being handed to `ingest()` whole, carrying its `sql`.
+    assert.ok(
+      !/\bingest\(\s*deps\.ingest\s*,/.test(server),
+      'a handler calls ingest(deps.ingest, …), which writes through the boot-time primary handle ' +
+        'and ignores CF-Network. Spread it and override sql: ingest({ ...deps.ingest, sql: ctx.sql })',
+    )
+  })
+
+  it('the ingest route overrides sql with the request-scoped handle', () => {
+    assert.match(
+      server,
+      /ingest\(\{\s*\.\.\.deps\.ingest,\s*sql:\s*ctx\.sql[^}]*\}/,
+      'the ingest route must resolve its handle from ctx.sql',
+    )
   })
 })
 
