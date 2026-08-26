@@ -12,8 +12,14 @@
  * wrap it or write down why it does not need one.
  *
  * The check is by ENUMERATION rather than by a list of routes somebody remembered to update — the
- * list is derived from `server.ts` itself, and the last three cases exist so that a detector which
- * has stopped seeing routes fails loudly instead of passing vacuously.
+ * list is derived from the route table itself, and the last three cases exist so that a detector
+ * which has stopped seeing routes fails loudly instead of passing vacuously.
+ *
+ * **It reads `routes.ts`.** Wave M1a moved the table out of `server.ts` into `createRoutes()`;
+ * this file followed it, unchanged in what it asserts. The last three cases are what make that
+ * safe to do: a detector left pointing at the old file finds zero routes and every other case in
+ * here passes over an empty list, which is precisely the vacuous green they exist to prevent —
+ * and is exactly what they caught during that move.
  */
 
 import assert from 'node:assert/strict'
@@ -21,10 +27,10 @@ import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-const RAW = readFileSync(fileURLToPath(new URL('./server.ts', import.meta.url)), 'utf8')
+const RAW = readFileSync(fileURLToPath(new URL('./routes.ts', import.meta.url)), 'utf8')
 
 /**
- * The server with its comments removed.
+ * The route table with its comments removed.
  *
  * Not cosmetic. `POST /ingest` carries a doc comment reading "deliberately NOT wrapped in
  * `withIdempotency`", and a detector that greps the raw file reports that route as WRAPPED — the
@@ -32,7 +38,7 @@ const RAW = readFileSync(fileURLToPath(new URL('./server.ts', import.meta.url)),
  * name the wrapper. The first version of this file did precisely that. Only whole-line `//`
  * comments are stripped, so the `http://` inside a template literal survives.
  */
-const SERVER = RAW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+const SOURCE = RAW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
 /**
  * Mutating routes that are safe WITHOUT the wrapper, each with the reason.
@@ -54,15 +60,15 @@ interface RouteRef {
   readonly wrapped: boolean
 }
 
-/** Every route in `buildRoutes()`, with whether its handler reaches `withIdempotency`. */
+/** Every route in `createRoutes()`, with whether its handler reaches `withIdempotency`. */
 function routes(): readonly RouteRef[] {
   const pattern = /method:\s*'([A-Z]+)',\s*path:\s*'([^']+)'/g
   const found: Array<{ key: string; at: number }> = []
-  for (let match = pattern.exec(SERVER); match !== null; match = pattern.exec(SERVER)) {
+  for (let match = pattern.exec(SOURCE); match !== null; match = pattern.exec(SOURCE)) {
     found.push({ key: `${match[1]} ${match[2]}`, at: match.index })
   }
   return found.map((route, index) => {
-    const body = SERVER.slice(route.at, found[index + 1]?.at ?? SERVER.length)
+    const body = SOURCE.slice(route.at, found[index + 1]?.at ?? SOURCE.length)
     return { key: route.key, body, wrapped: body.includes('withIdempotency(') }
   })
 }

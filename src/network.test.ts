@@ -40,7 +40,7 @@ describe('the network a request is attributed to', () => {
   })
 
   it('REFUSES an unstamped request rather than assuming mainnet', () => {
-    // server.ts turns this into a 500 with `network_unknown`. A 500 on a misrouted request is a
+    // kernel.ts turns this into a 500 with `network_unknown`. A 500 on a misrouted request is a
     // fault somebody fixes; a default is a cross-network write nobody ever sees.
     assert.throws(() => requestNetwork({}), NetworkUnknownError)
   })
@@ -99,14 +99,19 @@ describe('every database-touching handler resolves the network per request', () 
    *
    * Hence a source assertion. It is narrow on purpose — it does not try to prove every handler is
    * correct, only that no handler passes the boot-time handle where the per-request one belongs.
+   *
+   * It reads `routes.ts` rather than `server.ts` since wave M1a moved the route table there
+   * (`createRoutes`). The file moved; the assertions did not change. Both cases must keep naming
+   * whichever file declares the handlers — a source assertion pointed at a file the routes have
+   * left passes vacuously, which is worse than not having one.
    */
-  const server = readFileSync(new URL('./server.ts', import.meta.url), 'utf8')
+  const handlers = readFileSync(new URL('./routes.ts', import.meta.url), 'utf8')
 
   it('no handler passes the boot-time ingest handle to a write', () => {
     // `deps.ingest` may still be read for its secrets and peppers — those are process-wide by
     // design. What must not appear is it being handed to `ingest()` whole, carrying its `sql`.
     assert.ok(
-      !/\bingest\(\s*deps\.ingest\s*,/.test(server),
+      !/\bingest\(\s*deps\.ingest\s*,/.test(handlers),
       'a handler calls ingest(deps.ingest, …), which writes through the boot-time primary handle ' +
         'and ignores CF-Network. Spread it and override sql: ingest({ ...deps.ingest, sql: ctx.sql })',
     )
@@ -114,7 +119,7 @@ describe('every database-touching handler resolves the network per request', () 
 
   it('the ingest route overrides sql with the request-scoped handle', () => {
     assert.match(
-      server,
+      handlers,
       /ingest\(\{\s*\.\.\.deps\.ingest,\s*sql:\s*ctx\.sql[^}]*\}/,
       'the ingest route must resolve its handle from ctx.sql',
     )
