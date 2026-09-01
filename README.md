@@ -2,6 +2,32 @@
 
 [![ci](https://github.com/cloudsforge-online/micro-analytics/actions/workflows/ci.yml/badge.svg)](https://github.com/cloudsforge-online/micro-analytics/actions/workflows/ci.yml) [![TypeScript](https://img.shields.io/badge/TypeScript-strict%20ESM-3178C6?logo=typescript&logoColor=white)](./tsconfig.base.json) [![node](https://img.shields.io/badge/node-%3E%3D22-5FA04E?logo=nodedotjs&logoColor=white)](./package.json) [![tests](https://img.shields.io/badge/tests-real%20Postgres-4169E1?logo=postgresql&logoColor=white)](./.github/workflows/ci.yml) [![licence](https://img.shields.io/badge/licence-MIT-blue)](./LICENSE)
 
+<!-- absorbed-banner -->
+> ## ⚠️ This code no longer deploys as a service. It runs inside `micro-agora`.
+>
+> Absorbed in wave **M1** (2026-08-28) of the estate's service-merge sequence.
+>
+> **The canonical source is [`micro-agora`](https://github.com/cloudsforge-online/micro-agora)
+> at [`src/lantern/analytics/`](https://github.com/cloudsforge-online/micro-agora/tree/main/src/lantern/analytics).
+> Edit there.** What is in this repository is the copy the merge was made from: it is frozen, no
+> image is published from it, `cfctl bump` skips it, and nothing in the estate runs it.
+> It arrived there in two steps: M1 merged it into `lantern`, and `lantern` itself became a module of `agora` later in the sequence. The nesting is preserved — the source sits at `src/lantern/analytics`, one level deeper than the modules that moved directly.
+>
+>
+> **Why the repository still exists.** Its registry row survives as `absorbed(…)`, which is what
+> keeps the Kubernetes `Service` of this name resolving — an `ExternalName` alias to `agora`, so
+> every caller that addresses it by service name still reaches the code. `deployableRepos()` keeps
+> the row and `releasableRepos()` drops it. The history here is also the history of the module.
+>
+> **What did not change**, and this is the point of the merge rather than an aside: the database is
+> still its own, the routes are unchanged except where a collision forced a remount, the migrations
+> still run under this module's name, and the trust boundary is unchanged. A merge moved a process
+> boundary, not a responsibility.
+>
+> Everything below describes the domain, and remains accurate. Read the reasoning — including what
+> was refused and why — in
+> [`micro-deploy/docs/service-merge-plan.md`](https://github.com/cloudsforge-online/micro-deploy/blob/main/docs/service-merge-plan.md).
+
 The estate's **product analytics plane**: a pseudonymised, append-only product event store fed by
 the event bus, never by a third-party page tag.
 
